@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 *.log
 .DS_Store
+stock_monitor/data/
+stock_backtest/output/
+snake/highscore.json
+kaleidoscope/drawings/
+.pytest_cache/
