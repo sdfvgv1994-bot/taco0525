@@ -17,8 +17,10 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -200,28 +202,32 @@ def parse_mis(js: dict) -> dict:
 
 
 # ---------------------------------------------------------------- 跨程式限速與封鎖紀錄
+_WINDOWS = os.name == "nt"
+MAX_QUEUE_AHEAD = 120  # 預約的時段最多排到幾秒後；超過代表時鐘被調過，重新起算
+
+
 @contextmanager
 def _file_lock(path: Path):
-    """跨程式的互斥鎖（Windows 用 msvcrt，其他系統用 fcntl）。"""
+    """跨程式的互斥鎖（Windows 用 msvcrt，其他系統用 fcntl）。只用來保護很短的讀寫。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT)
     try:
-        if os.name == "nt":
+        if _WINDOWS:
             import msvcrt
-            while True:
+            while True:  # 不用 LK_LOCK：它每秒才重試一次，別的程式會等很久
                 try:
                     os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # 拿不到會自己重試 10 秒再丟 OSError
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
                     break
                 except OSError:
-                    continue
+                    time.sleep(0.02)
         else:
             import fcntl
             fcntl.flock(fd, fcntl.LOCK_EX)
         yield
     finally:
         try:
-            if os.name == "nt":
+            if _WINDOWS:
                 import msvcrt
                 os.lseek(fd, 0, os.SEEK_SET)
                 msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
@@ -239,10 +245,18 @@ def _read_float(path: Path) -> float:
         return 0.0
 
 
-class HostGate:
-    """同一個網站的連線排隊：程式內用執行緒鎖，程式之間用檔案鎖＋上次連線時間。
+def _minutes(seconds: float) -> int:
+    return max(1, math.ceil(seconds / 60))
 
-    state_dir 為 None 時只在程式內限速（測試用）。
+
+class HostGate:
+    """同一個網站的連線排隊與封鎖紀錄。
+
+    排隊方式是「預約時段」：在鎖裡讀出上一個預約的時間，往後排 min_interval 秒
+    寫回去，馬上放開鎖，再睡到自己的時段才連線。鎖只握幾毫秒，所以不同程式
+    （回測、看盤、看板）可以交錯排隊，誰也不會被長時間卡住。
+
+    state_dir 為 None、或資料夾不能寫入時，只在程式內限速。
     """
 
     def __init__(self, host: str, state_dir: Path | None, min_interval: float):
@@ -250,56 +264,90 @@ class HostGate:
         self.min_interval = min_interval
         self.state_dir = state_dir
         self._thread_lock = threading.Lock()
-        self._last = 0.0          # 沒有 state_dir 時用
-        self._blocked_at = 0.0    # 沒有 state_dir 時用
+        self._next_slot = 0.0     # 程式內的預約（沒有 state_dir 時用）
+        self._blocked_at = 0.0    # 程式內的封鎖紀錄（沒有 state_dir 時用）
+        self._file_ok = state_dir is not None
 
     def _paths(self):
         d = self.state_dir
-        return d / f".gate_{self.host}.lock", d / f".gate_{self.host}.last", d / f".blocked_{self.host}"
+        return d / f".gate_{self.host}.lock", d / f".gate_{self.host}.next", d / f".blocked_{self.host}"
 
+    def _file_failed(self, e: OSError) -> None:
+        if self._file_ok:
+            self._file_ok = False
+            print(f"⚠ 快取資料夾 {self.state_dir} 無法寫入（{e}），只在這個程式內限速",
+                  file=sys.stderr)
+
+    # ---- 封鎖紀錄 ----
     def blocked_remaining(self) -> float:
-        """還要等幾秒才解除「封鎖中」的紀錄；0 表示沒有被封鎖。"""
-        at = _read_float(self._paths()[2]) if self.state_dir else self._blocked_at
-        return max(0.0, at + BLOCK_COOLDOWN - time.time())
+        """還要等幾秒才解除封鎖紀錄；0 = 沒有被封鎖。最多 BLOCK_COOLDOWN（時鐘被調過也不會卡更久）。"""
+        at = self._blocked_at
+        if self._file_ok:
+            at = max(at, _read_float(self._paths()[2]))
+        return max(0.0, min(BLOCK_COOLDOWN, at + BLOCK_COOLDOWN - time.time()))
 
     def mark_blocked(self) -> None:
         now = time.time()
         self._blocked_at = now
-        if self.state_dir:
-            path = self._paths()[2]
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"{now}")
-
-    def clear_blocked(self) -> None:
-        self._blocked_at = 0.0
-        if self.state_dir:
+        if self._file_ok:
             try:
-                self._paths()[2].unlink()
+                self._paths()[2].write_text(f"{now}")
+            except OSError as e:
+                self._file_failed(e)
+
+    def clear_blocked(self, since: float = float("inf")) -> None:
+        """連線成功後清掉封鎖紀錄；但如果紀錄是在 since（自己送出請求）之後才寫的，表示別的請求
+        剛被封鎖，就保留。"""
+        if self._blocked_at < since:
+            self._blocked_at = 0.0
+        if self._file_ok:
+            path = self._paths()[2]
+            if _read_float(path) >= since:
+                return
+            try:
+                path.unlink()
             except FileNotFoundError:
                 pass
+            except OSError as e:
+                self._file_failed(e)
 
-    @contextmanager
-    def turn(self):
-        """輪到自己才能連線；結束時記下時間，下一個請求（不論哪個程式）至少再等 min_interval。"""
+    def raise_if_blocked(self) -> None:
+        left = self.blocked_remaining()
+        if left > 0:
+            raise TwseError(f"{self.host} 剛剛暫時封鎖了這台電腦的連線，"
+                            f"約 {_minutes(left)} 分鐘內先不連線（避免封鎖時間被拉長）")
+
+    # ---- 排隊 ----
+    def _reserve(self) -> float:
+        """預約下一個可以連線的時間點（time.time() 的秒數）。"""
+        now = time.time()
         with self._thread_lock:
-            if self.state_dir is None:
-                wait = self._last + self.min_interval - time.time()
-                if wait > 0:
-                    time.sleep(wait)
+            if self._file_ok:
+                lock_path, next_path, _ = self._paths()
                 try:
-                    yield
-                finally:
-                    self._last = time.time()
-                return
-            lock_path, last_path, _ = self._paths()
-            with _file_lock(lock_path):
-                wait = _read_float(last_path) + self.min_interval - time.time()
-                if wait > 0:
-                    time.sleep(min(wait, self.min_interval))  # 時鐘被調過也不會等太久
-                try:
-                    yield
-                finally:
-                    last_path.write_text(f"{time.time()}")
+                    with _file_lock(lock_path):
+                        prev = _read_float(next_path)
+                        if prev > now + MAX_QUEUE_AHEAD:
+                            prev = 0.0
+                        slot = max(now, prev + self.min_interval if prev else now)
+                        next_path.write_text(f"{slot}")
+                    return slot
+                except OSError as e:
+                    self._file_failed(e)
+            prev = self._next_slot
+            if prev > now + MAX_QUEUE_AHEAD:
+                prev = 0.0
+            slot = max(now, prev + self.min_interval if prev else now)
+            self._next_slot = slot
+            return slot
+
+    def wait_turn(self) -> None:
+        """排隊等到自己的時段；輪到時如果網站已經被記為封鎖（可能是排在前面的請求剛被封），就不連線。"""
+        self.raise_if_blocked()
+        wait = self._reserve() - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        self.raise_if_blocked()
 
 
 # ---------------------------------------------------------------- 連線與快取
@@ -336,14 +384,13 @@ class TwseClient:
             self._session.headers.update(HEADERS)
         return self._session
 
-    def _get_json(self, url: str, params: dict) -> dict:
+    def _get_json(self, url: str, params: dict, redirect_is_block: bool = True) -> dict:
         gate = self.gate(url)
-        left = gate.blocked_remaining()
-        if left > 0:
-            raise TwseError(f"{gate.host} 剛剛暫時封鎖了這台電腦的連線，"
-                            f"約 {left / 60:.0f} 分鐘內先不連線（避免封鎖時間被拉長）")
-        with gate.turn():
-            r = self.session.get(url, params=params, timeout=TIMEOUT, allow_redirects=False)
+        gate.wait_turn()
+        sent_at = time.time()
+        r = self.session.get(url, params=params, timeout=TIMEOUT, allow_redirects=False)
+        if not redirect_is_block and 300 <= r.status_code < 400:
+            raise TwseError(f"{url} 回應 HTTP {r.status_code}（這個網址可能已經停用）")
         if r.status_code in BLOCKED_STATUS:
             # 實測被封鎖時：證交所轉址（307），即時報價回 502 安全性頁面
             gate.mark_blocked()
@@ -358,7 +405,7 @@ class TwseClient:
             gate.mark_blocked()
             raise TwseError(f"{gate.host} 回應不是 JSON（可能被暫時封鎖，"
                             f"{BLOCK_COOLDOWN // 60} 分鐘內先不連線）") from None
-        gate.clear_blocked()
+        gate.clear_blocked(since=sent_at)
         return js
 
     def _cached(self, key: str, is_current: bool, fetch) -> dict:
@@ -387,16 +434,13 @@ class TwseClient:
         cur = (y, m) == ((today or date.today()).year, (today or date.today()).month)
 
         def fetch():
-            try:
-                js = self._get_json(URL_TPEX, {"code": code, "date": f"{y}/{m:02d}/01",
-                                               "response": "json"})
-            except TwseError:
-                js = None  # 被封鎖的話，下面的舊網址也會直接報錯，不會真的連線
+            js = self._get_json(URL_TPEX, {"code": code, "date": f"{y}/{m:02d}/01",
+                                           "response": "json"})
             # 新版格式正常就用（就算那個月沒資料）；只有格式認不得時才試舊網址
-            if js is not None and ("tables" in js or str(js.get("stat", "")).lower() == "ok"):
+            if "tables" in js or str(js.get("stat", "")).lower() == "ok":
                 return js
             return self._get_json(URL_TPEX_OLD, {"l": "zh-tw", "d": f"{y - 1911}/{m:02d}",
-                                                 "stkno": code})
+                                                 "stkno": code}, redirect_is_block=False)
         return parse_tpex(self._cached(f"otc_{code}_{y}{m:02d}", cur, fetch))
 
     def index_month(self, y: int, m: int, today: date | None = None) -> pd.DataFrame:

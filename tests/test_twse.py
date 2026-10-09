@@ -3,7 +3,9 @@
 這些 JSON 的格式取自證交所 / 櫃買中心 API 的真實回應（2026/10 實測，只留 2～3 筆），
 部分數字是手改的，只用來確認解析、快取、限速、上市 / 上櫃判斷的邏輯。
 """
+import threading
 from datetime import date, datetime
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -203,13 +205,14 @@ def test_blocked_html_response(tmp_path):
         cl.stock_month("2330", 2024, 10)
 
 
-def test_http_error(tmp_path):
-    class S(FakeSession):
-        def get(self, url, params=None, timeout=None, **kw):
-            return FakeResp({}, status=503)
-    cl = twse.TwseClient(cache_dir=tmp_path, session=S(None), min_interval=0)
-    with pytest.raises(twse.TwseError, match="503"):
-        cl.index_month(2024, 10)
+def test_http_error_is_not_treated_as_block(tmp_path):
+    """一般的 HTTP 錯誤（500）要報錯，但不能啟動 5 分鐘的封鎖暫停。"""
+    sess = StatusSession(500)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=sess, min_interval=0)
+    with pytest.raises(twse.TwseError, match="500"):
+        cl.stock_month("2330", 2024, 10)
+    assert cl.gate(twse.URL_STOCK_DAY).blocked_remaining() == 0
+    assert not cl.stock_month("2330", 2024, 11).empty and len(sess.calls) == 2
 
 
 def test_throttle(tmp_path, monkeypatch):
@@ -347,23 +350,29 @@ def test_gate_per_host(tmp_path, monkeypatch):
     assert not sleeps
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def test_file_lock_across_processes(tmp_path):
     """真的開另一個程式拿著鎖，這邊要等它放開。"""
     import subprocess
     import sys
     import time as _t
     lock = tmp_path / ".gate_x.lock"
-    code = ("import sys, time; sys.path.insert(0, '.'); from common.twse import _file_lock; "
-            "from pathlib import Path\n"
+    code = (f"import sys, time; sys.path.insert(0, {str(ROOT)!r}); "
+            "from common.twse import _file_lock; from pathlib import Path\n"
             f"with _file_lock(Path({str(lock)!r})):\n"
             "    print('locked', flush=True); time.sleep(1.0)")
     p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
-    assert p.stdout.readline().strip() == "locked"
-    t0 = _t.monotonic()
-    with twse._file_lock(lock):
-        waited = _t.monotonic() - t0
-    p.wait(timeout=10)
-    assert waited > 0.5
+    try:
+        assert p.stdout.readline().strip() == "locked"
+        t0 = _t.monotonic()
+        with twse._file_lock(lock):
+            waited = _t.monotonic() - t0
+        assert waited > 0.5
+    finally:
+        p.kill()
+        p.wait(timeout=10)
 
 
 class StatusSession(FakeSession):
@@ -379,7 +388,8 @@ class StatusSession(FakeSession):
         return FakeResp(self.router(url, params or {}))
 
 
-@pytest.mark.parametrize("status,body", [(307, {}), (502, {}), (403, {}), (200, ValueError("html"))])
+@pytest.mark.parametrize("status,body", [(307, {}), (302, {}), (403, {}), (429, {}), (502, {}),
+                                         (503, {}), (200, ValueError("html"))])
 def test_block_detected_and_cooldown(tmp_path, status, body):
     sess = StatusSession(status, body)
     cl = twse.TwseClient(cache_dir=tmp_path, session=sess, min_interval=0)
@@ -435,3 +445,207 @@ def test_tpex_empty_month_does_not_touch_old_url(tmp_path):
         raise AssertionError("不該連舊網址")
     cl, _ = make_client(tmp_path, route)
     assert cl.tpex_month("6488", 2024, 10).empty
+
+
+def _reserve_many(root, state_dir, n, barrier, out):
+    """子程序用：等大家到齊後同時開始連續預約 n 個時段。
+    讀檔時故意慢一點（模擬慢的磁碟），讓沒有鎖時的讀寫衝突一定會發生。"""
+    import sys
+    import time as _t
+    sys.path.insert(0, root)
+    from pathlib import Path as P
+    from common import twse as tw
+    orig = tw._read_float
+
+    def slow_read(path):
+        v = orig(path)
+        _t.sleep(0.002)
+        return v
+    tw._read_float = slow_read
+    g = tw.HostGate("h", P(state_dir), 1.0)
+    barrier.wait()
+    out.put([g._reserve() for _ in range(n)])
+
+
+def test_reservations_unique_across_processes(tmp_path):
+    """4 個程式同時搶著預約：每個時段都要相隔 min_interval，不能有兩個程式拿到同一個時段。
+    （拿掉檔案鎖的話，讀寫會互相蓋掉而出現重複時段，這個測試就會失敗。）"""
+    import multiprocessing as mp
+    ctx = mp.get_context("spawn")
+    barrier, out = ctx.Barrier(4), ctx.Queue()
+    procs = [ctx.Process(target=_reserve_many, args=(str(ROOT), str(tmp_path), 25, barrier, out))
+             for _ in range(4)]
+    [p.start() for p in procs]
+    try:
+        slots = sorted(x for _ in procs for x in out.get(timeout=60))
+    finally:
+        [p.join(timeout=10) for p in procs]
+    assert len(slots) == 100
+    gaps = [b - a for a, b in zip(slots, slots[1:])]
+    assert min(gaps) > 0.999
+
+
+def test_real_spacing_between_clients_without_stubbing_sleep(tmp_path):
+    """兩個 client（模擬兩個程式）在兩個執行緒同時連線，實際送出時間要相隔 min_interval。"""
+    import time as _t
+    sent = []
+
+    class Rec(FakeSession):
+        def get(self, url, params=None, timeout=None, **kw):
+            sent.append(_t.monotonic())
+            return super().get(url, params, timeout, **kw)
+
+    clients = [twse.TwseClient(cache_dir=tmp_path, session=Rec(stock_router()), min_interval=0.3)
+               for _ in range(2)]
+
+    def work(c, months):
+        for m in months:
+            c.stock_month("2330", 2024, m)
+
+    ts = [threading.Thread(target=work, args=(clients[0], [1, 2])),
+          threading.Thread(target=work, args=(clients[1], [3, 4]))]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    sent.sort()
+    assert len(sent) == 4
+    assert min(b - a for a, b in zip(sent, sent[1:])) > 0.25
+
+
+def test_queued_request_not_sent_after_block(tmp_path):
+    """前一個請求被封鎖時，已經在排隊的請求（別的程式）輪到時也不能送出。"""
+    import time as _t
+    names = []
+
+    class Slow307(FakeSession):
+        def __init__(self, name):
+            super().__init__(stock_router())
+            self.name = name
+
+        def get(self, url, params=None, timeout=None, **kw):
+            names.append(self.name)
+            _t.sleep(0.1)
+            return FakeResp({}, status=307)
+
+    a = twse.TwseClient(cache_dir=tmp_path, session=Slow307("A"), min_interval=0.4)
+    b = twse.TwseClient(cache_dir=tmp_path, session=Slow307("B"), min_interval=0.4)
+    errors = []
+
+    def run(c, m):
+        try:
+            c.stock_month("2330", 2024, m)
+        except twse.TwseError as e:
+            errors.append(str(e))
+
+    ta = threading.Thread(target=run, args=(a, 1))
+    ta.start()
+    _t.sleep(0.02)                      # B 在 A 連線途中開始排隊
+    tb = threading.Thread(target=run, args=(b, 2))
+    tb.start()
+    ta.join()
+    tb.join()
+    assert names == ["A"]
+    assert any("分鐘內先不連線" in e for e in errors)
+
+
+def test_success_does_not_clear_newer_block(tmp_path):
+    mine = twse.HostGate("h", tmp_path, 0)
+    other = twse.HostGate("h", tmp_path, 0)   # 另一個程式
+    sent_at = twse.time.time()
+    other.mark_blocked()                      # 對方在我們送出請求之後才被封鎖
+    mine.clear_blocked(since=sent_at)         # 我們的請求成功了，但不能清掉對方的新紀錄
+    assert mine.blocked_remaining() > 0 and other.blocked_remaining() > 0
+    mine.clear_blocked(since=twse.time.time() + 1)
+    assert mine.blocked_remaining() == 0
+
+
+def test_unwritable_cache_dir_falls_back_to_memory(tmp_path, capsys):
+    not_a_dir = tmp_path / "file"
+    not_a_dir.write_text("x")
+    cl = twse.TwseClient(cache_dir=not_a_dir / "twse", session=FakeSession(stock_router()),
+                         min_interval=0)
+    got = cl.realtime(["2330"])          # 即時報價本來就不需要寫檔，不能因此失敗
+    assert got["2330"].price == 1000
+    cl.realtime(["2330"])
+    err = capsys.readouterr().err
+    assert err.count("無法寫入") == 1      # 只提醒一次
+
+
+def test_clock_skew_cannot_extend_block_or_queue(tmp_path):
+    gate = twse.HostGate("h", tmp_path, 3)
+    _, next_path, blocked_path = gate._paths()
+    future = twse.time.time() + 8 * 3600   # 例如雙系統時區設錯，時鐘快了 8 小時
+    blocked_path.write_text(f"{future}")
+    assert gate.blocked_remaining() <= twse.BLOCK_COOLDOWN
+    next_path.write_text(f"{future}")
+    assert gate._reserve() - twse.time.time() < 1
+
+
+def test_block_message_never_says_zero_minutes(tmp_path):
+    gate = twse.HostGate("h", tmp_path, 0)
+    (tmp_path / ".blocked_h").write_text(f"{twse.time.time() - twse.BLOCK_COOLDOWN + 20}")
+    with pytest.raises(twse.TwseError, match="約 1 分鐘"):
+        gate.raise_if_blocked()
+
+
+def test_tpex_new_api_error_does_not_try_old_url(tmp_path):
+    def route(url, p):
+        if url == twse.URL_TPEX:
+            return {}
+        raise AssertionError("不該連舊網址")
+
+    class S(FakeSession):
+        def get(self, url, params=None, timeout=None, **kw):
+            self.calls.append(url)
+            return FakeResp({}, status=500)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=S(route), min_interval=0)
+    with pytest.raises(twse.TwseError, match="500"):
+        cl.tpex_month("6488", 2024, 10)
+    assert cl.session.calls == [twse.URL_TPEX]
+
+
+def test_tpex_old_url_redirect_is_not_a_block(tmp_path):
+    class S(FakeSession):
+        def get(self, url, params=None, timeout=None, **kw):
+            self.calls.append(url)
+            if url == twse.URL_TPEX:
+                return FakeResp({"unexpected": "format"})
+            return FakeResp({}, status=301)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=S(None), min_interval=0)
+    with pytest.raises(twse.TwseError, match="停用"):
+        cl.tpex_month("6488", 2024, 10)
+    assert cl.gate(twse.URL_TPEX).blocked_remaining() == 0
+
+
+def test_windows_lock_path(tmp_path, monkeypatch):
+    """用假的 msvcrt（行為照 LK_NBLCK：拿不到立刻丟 OSError）測 Windows 分支。"""
+    import fcntl
+    import sys
+    import time as _t
+    import types
+    fake = types.SimpleNamespace(LK_NBLCK=2, LK_UNLCK=0)
+
+    def locking(fd, mode, n):
+        if mode == fake.LK_UNLCK:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)   # 拿不到會丟 BlockingIOError（OSError）
+    fake.locking = locking
+    monkeypatch.setitem(sys.modules, "msvcrt", fake)
+    monkeypatch.setattr(twse, "_WINDOWS", True)
+    lock = tmp_path / "w.lock"
+    released = []
+
+    def holder():
+        with twse._file_lock(lock):
+            _t.sleep(0.3)
+            released.append(_t.monotonic())
+
+    t = threading.Thread(target=holder)
+    t.start()
+    _t.sleep(0.05)
+    with twse._file_lock(lock):
+        got = _t.monotonic()
+    t.join()
+    assert released and 0 <= got - released[0] < 0.15   # 對方一放開就拿到，不會等一秒
+    gate = twse.HostGate("h", tmp_path, 0)
+    assert gate._reserve() > 0
