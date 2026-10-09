@@ -5,3 +5,4 @@ requests
 matplotlib
 pygame-ce
 pytest
+tzdata

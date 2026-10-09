@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全球股市看板</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ef;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --rise: #d03b3b;       /* 台灣習慣：紅漲 */
+  --fall: #006300;       /* 台灣習慣：綠跌 */
+  --flat: #898781;
+  --open: #0ca30c;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --rise: #e66767; --fall: #0ca30c;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --accent: #3987e5; --rise: #e66767; --fall: #0ca30c;
+  --shadow: none;
+}
+/* 國際習慣：綠漲紅跌（把兩個顏色對調） */
+:root[data-colors="intl"] { --rise-x: var(--fall); --fall-x: var(--rise); }
+:root:not([data-colors="intl"]) { --rise-x: var(--rise); --fall-x: var(--fall); }
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+}
+button { font: inherit; color: inherit; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: .02em; }
+.updated { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; }
+.btn {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+  padding: 6px 10px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--surface-2); }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.demo-badge { background: #fab219; color: #0b0b0b; border-radius: 6px; padding: 1px 8px; font-size: 12px; }
+
+.clocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.clock {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 12px; box-shadow: var(--shadow);
+}
+.clock .city { color: var(--ink-2); font-size: 12px; }
+.clock .time { font-size: 20px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--axis); }
+.pill.open { color: var(--ink-2); }
+.pill.open .dot { background: var(--open); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+
+section.panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px 10px; margin-bottom: 16px; box-shadow: var(--shadow);
+}
+section.panel h2 { font-size: 15px; margin: 0 0 2px; font-weight: 650; }
+section.panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+
+/* 漲跌排行 */
+.rank { position: relative; }
+.rank svg { display: block; width: 100%; overflow: visible; }
+.rank text { font-size: 12px; fill: var(--ink-2); }
+.rank .val { fill: var(--ink); font-variant-numeric: tabular-nums; }
+.rank .zero { stroke: var(--axis); }
+
+.group h2 { font-size: 16px; margin: 20px 0 8px; font-weight: 650; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.card {
+  text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px 10px; cursor: pointer; box-shadow: var(--shadow); width: 100%;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.card:hover { border-color: var(--accent); }
+.card:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.card .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .sym { color: var(--muted); font-size: 11px; }
+.card .price { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card .chg { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
+.card .err { color: var(--muted); font-size: 12px; padding: 18px 0; }
+.card svg.spark { width: 100%; height: 40px; display: block; margin-top: 4px; }
+.card .foot { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+.rise { color: var(--rise-x); }
+.fall { color: var(--fall-x); }
+.flat { color: var(--flat); }
+
+/* 詳細走勢 */
+dialog {
+  border: 1px solid var(--border); border-radius: 14px; padding: 0; width: min(920px, calc(100vw - 32px));
+  background: var(--surface); color: var(--ink);
+}
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dlg { padding: 16px; }
+.dlg-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.dlg-head h3 { margin: 0; font-size: 18px; }
+.dlg-head .close { margin-left: auto; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 12px 0; }
+.stat { background: var(--surface-2); border-radius: 8px; padding: 6px 10px; }
+.stat .k { color: var(--muted); font-size: 12px; }
+.stat .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.periods { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chart { position: relative; margin-top: 8px; }
+.chart svg { display: block; width: 100%; height: 320px; }
+.chart .tick { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.chart .gridline { stroke: var(--grid); }
+.chart .baseline { stroke: var(--axis); }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  white-space: nowrap; display: none; z-index: 2;
+}
+.tip b { font-variant-numeric: tabular-nums; }
+.table-wrap { max-height: 260px; overflow: auto; margin-top: 10px; display: none; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+th:first-child, td:first-child { text-align: left; }
+.loading, .error-msg { color: var(--muted); padding: 40px 0; text-align: center; }
+.note { color: var(--muted); font-size: 12px; margin-top: 24px; }
+
+@media (max-width: 560px) {
+  .cards { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .card { padding: 10px; }
+  .card .price { font-size: 17px; }
+  .chart svg { height: 240px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>全球股市看板</h1>
+    <span id="demo" class="demo-badge" hidden>示範資料</span>
+    <span class="updated" id="updated">載入中…</span>
+    <span class="spacer"></span>
+    <button class="btn" id="colorBtn" title="切換漲跌顏色">紅漲綠跌</button>
+    <button class="btn" id="themeBtn" title="切換深色 / 淺色">主題：自動</button>
+    <button class="btn" id="refreshBtn">↻ 更新</button>
+  </header>
+
+  <div class="clocks" id="clocks"></div>
+  <div class="filters" id="filters" role="toolbar" aria-label="篩選地區"></div>
+
+  <section class="panel" id="rankPanel">
+    <h2>今日股市漲跌排行</h2>
+    <div class="sub">各國股價指數今天的漲跌幅（最新價對比前一個交易日收盤）</div>
+    <div class="rank" id="rank"></div>
+  </section>
+
+  <div id="groups"><div class="loading">正在載入資料…（第一次向證交所下載資料可能要 20 秒左右）</div></div>
+
+  <p class="note">
+    台灣項目資料來自台灣證券交易所（即時報價）；其他來自 Yahoo Finance，可能有 15 分鐘以上延遲。
+    交易時間不含各國國定假日。每 60 秒自動更新。點卡片可看詳細走勢。
+  </p>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <div class="dlg">
+    <div class="dlg-head">
+      <h3 id="dlgTitle"></h3>
+      <span class="updated" id="dlgSub"></span>
+      <button class="btn close" id="closeBtn" aria-label="關閉">✕</button>
+    </div>
+    <div class="periods" id="periods"></div>
+    <div class="stats" id="stats"></div>
+    <div class="chart" id="chart"></div>
+    <button class="btn" id="tableBtn" aria-pressed="false" style="margin-top:8px">顯示資料表</button>
+    <div class="table-wrap" id="tableWrap"></div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const INDEX_GROUPS = ["台灣", "美洲", "亞太", "歐洲"];
+const PERIODS = [["1mo", "1 個月"], ["3mo", "3 個月"], ["6mo", "6 個月"], ["1y", "1 年"], ["5y", "5 年"]];
+let data = null, filter = "全部", current = null;
+
+// ---------- 偏好設定（存在瀏覽器，失敗也沒關係） ----------
+function pref(key, val) {
+  try {
+    if (val === undefined) return localStorage.getItem("wm." + key);
+    localStorage.setItem("wm." + key, val);
+  } catch (e) { return null; }
+}
+function applyPrefs() {
+  const colors = pref("colors") || "tw";
+  document.documentElement.dataset.colors = colors;
+  $("colorBtn").textContent = colors === "tw" ? "紅漲綠跌" : "綠漲紅跌";
+  const theme = pref("theme") || "auto";
+  if (theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  $("themeBtn").textContent = "主題：" + { auto: "自動", light: "淺色", dark: "深色" }[theme];
+}
+$("colorBtn").onclick = () => { pref("colors", (pref("colors") || "tw") === "tw" ? "intl" : "tw"); applyPrefs(); };
+$("themeBtn").onclick = () => {
+  const order = ["auto", "light", "dark"];
+  pref("theme", order[(order.indexOf(pref("theme") || "auto") + 1) % 3]); applyPrefs();
+};
+
+// ---------- 格式 ----------
+function fmt(v, d) {
+  if (v == null || isNaN(v)) return "—";
+  return v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function dirClass(v) { return v > 0 ? "rise" : v < 0 ? "fall" : "flat"; }
+function arrow(v) { return v > 0 ? "▲" : v < 0 ? "▼" : "–"; }
+function pctText(v) { return v == null ? "—" : `${arrow(v)} ${v > 0 ? "+" : ""}${v.toFixed(2)}%`; }
+function el(tag, attrs = {}, text) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+function svg(tag, attrs = {}) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+// ---------- 世界時鐘 ----------
+function renderClocks() {
+  const box = $("clocks"); box.replaceChildren();
+  for (const c of data.clocks) {
+    const d = el("div", { class: "clock" });
+    d.append(el("div", { class: "city" }, `${c.city}（週${c.weekday}）`), el("div", { class: "time" }, c.time));
+    const p = el("span", { class: "pill" + (c.status === "open" ? " open" : "") });
+    p.append(el("span", { class: "dot" }), document.createTextNode(c.status === "open" ? "交易中" : "休市"));
+    d.append(p); box.append(d);
+  }
+}
+
+// ---------- 篩選 ----------
+function renderFilters() {
+  const box = $("filters"); box.replaceChildren();
+  for (const name of ["全部", ...data.groups.map((g) => g.name)]) {
+    const b = el("button", { class: "btn", "aria-pressed": String(name === filter) }, name);
+    b.onclick = () => { filter = name; pref("filter", name); renderFilters(); renderGroups(); };
+    box.append(b);
+  }
+}
+
+// ---------- 漲跌排行（橫條圖，以 0 為中線） ----------
+function renderRank() {
+  const items = data.groups.filter((g) => INDEX_GROUPS.includes(g.name))
+    .flatMap((g) => g.items)
+    .filter((it) => it.change_pct != null && (it.symbol.startsWith("^") || /\.(SS|SZ)$/.test(it.symbol)))
+    .sort((a, b) => b.change_pct - a.change_pct);
+  const box = $("rank"); box.replaceChildren();
+  if (!items.length) { box.append(el("div", { class: "loading" }, "沒有資料")); return; }
+  const W = Math.max(300, box.clientWidth), rowH = 24;
+  const labelW = Math.min(130, W * 0.26), valW = Math.min(64, W * 0.15);
+  const H = items.length * rowH + 8;
+  const maxAbs = Math.max(0.5, ...items.map((i) => Math.abs(i.change_pct)));
+  const plotL = labelW + valW, plotR = W - valW, zeroX = (plotL + plotR) / 2;
+  const scale = (plotR - plotL) / 2 / maxAbs;
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
+                         "aria-label": "各國股價指數今日漲跌幅排行" });
+  s.append(svg("line", { class: "zero", x1: zeroX, x2: zeroX, y1: 0, y2: H }));
+  const tip = el("div", { class: "tip" });
+  items.forEach((it, i) => {
+    const y = 4 + i * rowH, v = it.change_pct, w = Math.max(2, Math.abs(v) * scale);
+    const x = v >= 0 ? zeroX : zeroX - w;
+    const color = v > 0 ? "var(--rise-x)" : v < 0 ? "var(--fall-x)" : "var(--flat)";
+    const t = svg("text", { x: labelW - 6, y: y + rowH / 2 + 4, "text-anchor": "end" });
+    t.textContent = it.name; s.append(t);
+    // 只有朝外的那端是圓角，靠中線那端是直的
+    const r = Math.min(4, w / 2), h = rowH - 8, top = y + 4;
+    const d = v >= 0
+      ? `M${x},${top} h${w - r} a${r},${r} 0 0 1 ${r},${r} v${h - 2 * r} a${r},${r} 0 0 1 -${r},${r} h-${w - r} z`
+      : `M${x + w},${top} h-${w - r} a${r},${r} 0 0 0 -${r},${r} v${h - 2 * r} a${r},${r} 0 0 0 ${r},${r} h${w - r} z`;
+    s.append(svg("path", { d, fill: color }));
+    const vt = svg("text", { class: "val", x: v >= 0 ? x + w + 6 : x - 6, y: y + rowH / 2 + 4,
+                             "text-anchor": v >= 0 ? "start" : "end" });
+    vt.textContent = `${v > 0 ? "+" : ""}${v.toFixed(2)}%`; s.append(vt);
+    // 整列都是滑鼠感應區
+    const hit = svg("rect", { x: 0, y, width: W, height: rowH, fill: "transparent", style: "cursor:pointer" });
+    hit.addEventListener("mousemove", (e) => {
+      const r = box.getBoundingClientRect();
+      tip.innerHTML = "";
+      tip.append(el("div", {}, `${it.name}（${it.exchange_name}）`));
+      const b = el("b", { class: dirClass(v) }, pctText(v));
+      tip.append(b, document.createTextNode(`　${fmt(it.price, it.decimals)}`));
+      tip.style.display = "block";
+      tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 200) + "px";
+      tip.style.top = (e.clientY - r.top + 12) + "px";
+    });
+    hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+    hit.addEventListener("click", () => openDetail(it));
+    s.append(hit);
+  });
+  box.append(s, tip);
+}
+
+// ---------- 卡片 ----------
+function sparkline(values, dir) {
+  const W = 200, H = 40, pad = 3;
+  const s = svg("svg", { class: "spark", viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" });
+  if (!values || values.length < 2) return s;
+  const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
+  const pts = values.map((v, i) => [i / (values.length - 1) * W, H - pad - (v - lo) / span * (H - 2 * pad)]);
+  const color = dir > 0 ? "var(--rise-x)" : dir < 0 ? "var(--fall-x)" : "var(--flat)";
+  s.append(svg("polyline", { points: pts.map((p) => p.join(",")).join(" "), fill: "none", stroke: color,
+                             "stroke-width": 2, "vector-effect": "non-scaling-stroke",
+                             "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  return s;
+}
+
+function card(it) {
+  const b = el("button", { class: "card", type: "button" });
+  const top = el("div", { class: "top" });
+  top.append(el("span", { class: "name", title: it.name }, it.name), el("span", { class: "sym" }, it.symbol));
+  b.append(top);
+  if (it.error) {
+    b.append(el("div", { class: "err" }, "⚠ " + it.error));
+    b.disabled = true;
+    return b;
+  }
+  const v = it.change_pct;
+  b.append(el("div", { class: "price" }, fmt(it.price, it.decimals)));
+  const chg = it.change == null ? "—" : `${it.change > 0 ? "+" : ""}${fmt(it.change, it.decimals)}　${pctText(v)}`;
+  b.append(el("div", { class: "chg " + dirClass(v) }, chg));
+  b.append(sparkline(it.spark, v));
+  const foot = el("div", { class: "foot" });
+  const p = el("span", { class: "pill" + (it.status === "open" ? " open" : "") });
+  p.append(el("span", { class: "dot" }), document.createTextNode(`${it.exchange_name} ${it.status === "open" ? "交易中" : "休市"}`));
+  foot.append(p, el("span", {}, it.spark ? `近 ${it.spark.length} 日` : ""));
+  b.append(foot);
+  b.setAttribute("aria-label", `${it.name} ${fmt(it.price, it.decimals)} ${pctText(v)}，點擊看詳細走勢`);
+  b.onclick = () => openDetail(it);
+  return b;
+}
+
+function renderGroups() {
+  const box = $("groups"); box.replaceChildren();
+  for (const g of data.groups) {
+    if (filter !== "全部" && g.name !== filter) continue;
+    const sec = el("div", { class: "group" });
+    sec.append(el("h2", {}, g.name));
+    const grid = el("div", { class: "cards" });
+    g.items.forEach((it) => grid.append(card(it)));
+    sec.append(grid); box.append(sec);
+  }
+  $("rankPanel").hidden = !(filter === "全部" || INDEX_GROUPS.includes(filter));
+}
+
+// ---------- 詳細走勢 ----------
+async function openDetail(it, period) {
+  current = { it, period: period || pref("period") || "1y" };
+  $("dlgTitle").textContent = it.name;
+  $("dlgSub").textContent = `${it.symbol} · ${it.exchange_name}`;
+  const pb = $("periods"); pb.replaceChildren();
+  for (const [p, label] of PERIODS) {
+    const b = el("button", { class: "btn", "aria-pressed": String(p === current.period) }, label);
+    b.onclick = () => { pref("period", p); openDetail(it, p); };
+    pb.append(b);
+  }
+  $("stats").replaceChildren();
+  $("chart").replaceChildren(el("div", { class: "loading" }, "載入中…"));
+  $("tableWrap").replaceChildren();
+  if (!$("dlg").open) $("dlg").showModal();
+  try {
+    const r = await fetch(`/api/history?symbol=${encodeURIComponent(it.symbol)}&period=${current.period}`);
+    const h = await r.json();
+    if (!r.ok) throw new Error(h.error || r.statusText);
+    if (current.it !== it || current.period !== h.period) return;  // 使用者已經切換了
+    renderDetail(h);
+  } catch (e) {
+    $("chart").replaceChildren(el("div", { class: "error-msg" }, "⚠ " + e.message));
+  }
+}
+
+function renderDetail(h) {
+  const d = h.decimals, n = h.close.length, last = h.close[n - 1];
+  const stats = [["最新", fmt(last, d), ""], ["期間漲跌", pctText(h.change_pct), dirClass(h.change_pct)],
+                 ["期間最高", fmt(h.high, d), ""], ["期間最低", fmt(h.low, d), ""], ["資料來源", h.source, ""]];
+  const sb = $("stats"); sb.replaceChildren();
+  for (const [k, v, cls] of stats) {
+    const s = el("div", { class: "stat" });
+    s.append(el("div", { class: "k" }, k), el("div", { class: "v " + cls }, v));
+    sb.append(s);
+  }
+  lineChart($("chart"), h);
+  // 資料表（最新的在上面）
+  const tbl = el("table");
+  const head = el("tr"); head.append(el("th", {}, "日期"), el("th", {}, "收盤"), el("th", {}, "漲跌%"));
+  tbl.append(head);
+  for (let i = n - 1; i >= Math.max(0, n - 250); i--) {
+    const tr = el("tr");
+    const pct = i > 0 ? (h.close[i] / h.close[i - 1] - 1) * 100 : null;
+    tr.append(el("td", {}, h.dates[i]), el("td", {}, fmt(h.close[i], d)),
+              el("td", { class: pct == null ? "" : dirClass(pct) }, pct == null ? "—" : pctText(pct)));
+    tbl.append(tr);
+  }
+  $("tableWrap").replaceChildren(tbl);
+}
+
+function niceTicks(lo, hi, count) {
+  const span = hi - lo || Math.abs(hi) || 1;
+  const step0 = span / count, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function lineChart(box, h) {
+  box.replaceChildren();
+  const W = Math.max(320, box.clientWidth), H = box.clientWidth < 560 ? 240 : 320;
+  const m = { l: 8, r: 64, t: 12, b: 26 };
+  const vals = h.close, n = vals.length;
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const padV = (hi - lo) * 0.08 || Math.abs(hi) * 0.01 || 1; lo -= padV; hi += padV;
+  const X = (i) => m.l + (n === 1 ? 0.5 : i / (n - 1)) * (W - m.l - m.r);
+  const Y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${h.name} 收盤走勢` });
+  const dir = vals[n - 1] - vals[0];
+  const color = dir > 0 ? "var(--rise-x)" : dir < 0 ? "var(--fall-x)" : "var(--flat)";
+  // 格線與 Y 軸刻度（放右邊，像看盤軟體）
+  for (const t of niceTicks(lo, hi, 5)) {
+    s.append(svg("line", { class: "gridline", x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t) }));
+    const tx = svg("text", { class: "tick", x: W - m.r + 6, y: Y(t) + 4 });
+    tx.textContent = fmt(t, h.decimals > 2 ? h.decimals : (hi > 1000 ? 0 : 2)); s.append(tx);
+  }
+  s.append(svg("line", { class: "baseline", x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
+  // X 軸日期（大約 5 個）
+  const xt = Math.min(W < 560 ? 3 : 5, n);
+  for (let k = 0; k < xt; k++) {
+    const i = Math.round(k * (n - 1) / Math.max(1, xt - 1));
+    const tx = svg("text", { class: "tick", x: X(i), y: H - 8,
+                             "text-anchor": k === 0 ? "start" : k === xt - 1 ? "end" : "middle" });
+    tx.textContent = h.dates[i]; s.append(tx);
+  }
+  // 區域與線
+  const pts = vals.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`);
+  const area = svg("path", { d: `M${X(0)},${H - m.b} L${pts.join(" L")} L${X(n - 1)},${H - m.b} Z`,
+                             fill: color, "fill-opacity": 0.08 });
+  s.append(area);
+  s.append(svg("polyline", { points: pts.join(" "), fill: "none", stroke: color, "stroke-width": 2,
+                             "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  // 十字線與提示
+  const vline = svg("line", { stroke: "var(--axis)", "stroke-dasharray": "3 3", y1: m.t, y2: H - m.b, visibility: "hidden" });
+  const dot = svg("circle", { r: 4.5, fill: color, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" });
+  s.append(vline, dot);
+  const tip = el("div", { class: "tip" });
+  const hit = svg("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" });
+  const move = (clientX, clientY) => {
+    const r = s.getBoundingClientRect();
+    const px = (clientX - r.left) * (W / r.width);
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - m.l) / (W - m.l - m.r) * (n - 1))));
+    const x = X(i), y = Y(vals[i]);
+    vline.setAttribute("x1", x); vline.setAttribute("x2", x); vline.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.setAttribute("visibility", "visible");
+    const pct = i > 0 ? (vals[i] / vals[i - 1] - 1) * 100 : null;
+    tip.replaceChildren(el("div", {}, h.dates[i]));
+    const b = el("b", {}, fmt(vals[i], h.decimals));
+    tip.append(b);
+    if (pct != null) tip.append(document.createTextNode("　"), el("span", { class: dirClass(pct) }, pctText(pct)));
+    tip.style.display = "block";
+    const left = x * r.width / W;
+    tip.style.left = (left > r.width / 2 ? left - tip.offsetWidth - 12 : left + 12) + "px";
+    tip.style.top = Math.max(0, y * r.height / H - 40) + "px";
+  };
+  hit.addEventListener("mousemove", (e) => move(e.clientX, e.clientY));
+  hit.addEventListener("touchmove", (e) => { move(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }, { passive: false });
+  hit.addEventListener("mouseleave", () => {
+    tip.style.display = "none"; vline.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden");
+  });
+  s.append(hit);
+  box.append(s, tip);
+}
+
+$("closeBtn").onclick = () => $("dlg").close();
+$("dlg").addEventListener("click", (e) => { if (e.target === $("dlg")) $("dlg").close(); });
+$("tableBtn").onclick = () => {
+  const on = $("tableBtn").getAttribute("aria-pressed") !== "true";
+  $("tableBtn").setAttribute("aria-pressed", String(on));
+  $("tableBtn").textContent = on ? "隱藏資料表" : "顯示資料表";
+  $("tableWrap").style.display = on ? "block" : "none";
+};
+
+// ---------- 載入與自動更新 ----------
+async function load(force) {
+  $("refreshBtn").disabled = true;
+  try {
+    const r = await fetch("/api/overview" + (force ? "?force=1" : ""));
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    data = await r.json();
+    $("updated").textContent = "更新時間 " + data.updated;
+    $("demo").hidden = !data.demo;
+    if (!data.groups.some((g) => g.name === filter)) filter = "全部";
+    renderClocks(); renderFilters(); renderRank(); renderGroups();
+  } catch (e) {
+    $("updated").textContent = "⚠ 更新失敗：" + e.message;
+  } finally {
+    $("refreshBtn").disabled = false;
+  }
+}
+$("refreshBtn").onclick = () => load(true);
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (data) renderRank(); if ($("dlg").open && current) openDetail(current.it, current.period); }, 200);
+});
+// 切換顏色時，SVG 用的是 CSS 變數，會自動跟著變
+filter = pref("filter") || "全部";
+applyPrefs();
+load(false);
+setInterval(() => load(false), 60000);
+</script>
+</body>
+</html>

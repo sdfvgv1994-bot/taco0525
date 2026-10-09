@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | [`stock_monitor/`](stock_monitor/) | 自動看盤系統＋模擬下單 | `python stock_monitor/monitor.py` |
 | [`stock_backtest/`](stock_backtest/) | 策略回測：6 種策略、可一次比較（含固定 / 移動停損） | `python stock_backtest/backtest.py 2330 --compare` |
+| [`world_market/`](world_market/) | 全球股市看板（網頁） | `python world_market/app.py` |
 | [`snake/`](snake/) | 貪食蛇 | `python snake/snake.py` |
 | [`kaleidoscope/`](kaleidoscope/) | 萬花筒畫板 | `python kaleidoscope/kaleidoscope.py` |
 
