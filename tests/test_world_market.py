@@ -84,7 +84,7 @@ def test_overview_mixes_sources():
     assert items["^GSPC"]["source"] == "Yahoo Finance"
     assert items["^GSPC"]["change_pct"] == pytest.approx((139 / 138 - 1) * 100)
     assert "error" in items["SOL-USD"]
-    # 台灣項目不會送去 Yahoo（櫃買指數只拿 Yahoo 的走勢圖）
+    # 台灣項目不會送去 Yahoo
     assert all("2330.TW" not in syms for syms, _ in yh.calls)
     assert {c["key"] for c in ov["clocks"]} == {"TW", "JP", "UK", "EU", "US"}
 
@@ -127,6 +127,8 @@ def test_history_and_validation():
         svc.history("XYZ")
     with pytest.raises(ValueError):
         svc.history("^GSPC", "7y")
+    with pytest.raises(RuntimeError, match="櫃買指數"):
+        svc.history("^TWOII")
 
 
 def test_demo_overview_and_history_consistent():

@@ -20,8 +20,6 @@ from world_market.markets import (ALL_ITEMS, CLOCKS, EXCHANGES, GROUPS, Item,  #
 SPARK_DAYS = 30
 OVERVIEW_TTL = 60
 HISTORY_TTL = 10 * 60
-# 證交所沒有提供歷史資料的台灣項目，走勢圖改用 Yahoo
-TW_YAHOO_FALLBACK = {"^TWII": "^TWII", "^TWOII": "^TWOII"}
 
 
 def yahoo_code(it: Item) -> str:
@@ -117,7 +115,7 @@ class DataService:
             if it.symbol == "^TWII":
                 df = self.twse.index_history(start, end)
             elif it.symbol == "^TWOII":
-                df = None  # 證交所沒有櫃買指數歷史，走勢圖另外找 Yahoo
+                df = None  # 證交所沒有櫃買指數歷史，Yahoo 也沒有 ^TWOII，只顯示即時價
             else:
                 _, df = self.twse.history(it.symbol, start, end)
             if q is None or q.price is None:
@@ -134,12 +132,6 @@ class DataService:
                     df = pd.concat([df, pd.DataFrame({"Close": [q.price]}, index=[today])])
             out[it.symbol] = {"df": df, "price": float(q.price), "prev": q.prev_close,
                               "source": "證交所即時", "name": q.name}
-        if "^TWOII" in out and out["^TWOII"]["df"] is None:
-            try:
-                got = self.yahoo_download(["^TWOII"], "3mo").get("^TWOII")
-            except Exception:  # noqa: BLE001
-                got = None
-            out["^TWOII"]["df"] = got
         return out
 
     @staticmethod
@@ -197,11 +189,13 @@ class DataService:
         if hit and time.time() - hit[0] < HISTORY_TTL:
             return hit[1]
         it = ALL_ITEMS[symbol]
+        if symbol == "^TWOII" and not self.demo:
+            raise RuntimeError("櫃買指數沒有歷史資料來源（證交所不提供，Yahoo 也沒有 ^TWOII）")
         if self.demo:
             days = {"1mo": 22, "3mo": 66, "6mo": 130, "1y": 250, "2y": 500,
                     "5y": 1250, "10y": 2500}[period]
             df, source = self._demo_df(it, days), "示範資料"
-        elif it.source == "twse" and symbol != "^TWOII":
+        elif it.source == "twse":
             code, df = fetch_history(parse_symbol(symbol), period=period)
             source = "證交所" if code in ("^TWII",) or code.endswith((".TW", ".TWO")) else "Yahoo"
         else:

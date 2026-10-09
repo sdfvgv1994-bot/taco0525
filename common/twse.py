@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -36,6 +37,7 @@ URL_TPEX = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock"
 URL_TPEX_OLD = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
 URL_MIS = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 
+TAIPEI = ZoneInfo("Asia/Taipei")
 # 即時報價裡的指數代號
 MIS_INDEX = {"^TWII": "tse_t00.tw", "^TWOII": "otc_o00.tw"}
 
@@ -165,6 +167,8 @@ def parse_mis(js: dict) -> dict:
     out = {}
     for it in js.get("msgArray", []) or []:
         code = it.get("c") or ""
+        if not code:  # 同時查上市和上櫃時，不存在的那邊會回一筆空白項目
+            continue
         price = num(it.get("z"))
         if price is None:  # 這一刻沒有成交，用最佳買價第一檔
             bid = (it.get("b") or "").split("_")[0]
@@ -175,7 +179,8 @@ def parse_mis(js: dict) -> dict:
         ts = None
         if it.get("tlong"):
             try:
-                ts = datetime.fromtimestamp(int(it["tlong"]) / 1000)
+                # 一律換成台北時間（不帶時區），電腦不在台灣時日期才不會錯
+                ts = datetime.fromtimestamp(int(it["tlong"]) / 1000, TAIPEI).replace(tzinfo=None)
             except (TypeError, ValueError):
                 pass
         vol = num(it.get("v"))
@@ -222,6 +227,9 @@ class TwseClient:
                 r = self.session.get(url, params=params, timeout=TIMEOUT)
             finally:
                 self._last = time.monotonic()
+        if r.status_code in (302, 307, 403, 502):
+            # 實測被封鎖時：證交所轉址（307），即時報價回 502 安全性頁面
+            raise TwseError(f"{url} 回應 HTTP {r.status_code}（可能連線太頻繁被暫時封鎖，請過幾分鐘再試）")
         if r.status_code != 200:
             raise TwseError(f"{url} 回應 HTTP {r.status_code}")
         try:
