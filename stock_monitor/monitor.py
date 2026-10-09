@@ -13,11 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from common import strategies as strat  # noqa: E402
 from stock_monitor.account import TradeError  # noqa: E402
 from stock_monitor.engine import Monitor  # noqa: E402
 from stock_monitor.storage import Store  # noqa: E402
 
-KIND_ICON = {"golden": "🟢", "death": "🔴", "above": "⬆️ ", "below": "⬇️ ", "stop": "🛑"}
+KIND_ICON = {"buy": "🟢", "sell": "🔴", "above": "⬆️ ", "below": "⬇️ ", "stop": "🛑",
+             "golden": "🟢", "death": "🔴"}  # 後兩個是舊版提醒紀錄用的
 
 
 def bell():
@@ -25,9 +27,10 @@ def bell():
 
 
 def show_quotes(m: Monitor, res):
-    print(f"\n=== 報價 {datetime.now():%H:%M:%S} "
-          f"（MA{m.settings['short_ma']}/MA{m.settings['long_ma']}）===")
-    print(f"{'代號':<10}{'現價':>10}{'漲跌%':>8}{'短均':>10}{'長均':>10}{'RSI':>6}  趨勢  持股")
+    names = "、".join(strat.get(k).name for k in m.settings["strategies"])
+    print(f"\n=== 報價 {datetime.now():%H:%M:%S}（策略：{names}）===")
+    print(f"{'代號':<10}{'現價':>10}{'漲跌%':>8}{'MA' + str(m.settings['short_ma']):>10}"
+          f"{'MA' + str(m.settings['long_ma']):>10}{'RSI':>6}  趨勢  持股")
     for name in m.watchlist:
         if name in res.errors:
             print(f"{name:<10}  ⚠ {res.errors[name][:60]}")
@@ -40,6 +43,9 @@ def show_quotes(m: Monitor, res):
         held = f"{pos['shares']} 股" if pos else ""
         print(f"{name:<10}{s.price:>10.2f}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"
               f"{s.long_ma:>10.2f}{s.rsi:>6.0f}   {trend}   {held}")
+        today = [f"{'買' if v == 1 else '賣'}:{strat.get(k).name}" for k, v in s.signals.items() if v]
+        if today:
+            print(f"{'':<10}  今日訊號 {'  '.join(today)}")
     for a in res.alerts:
         print(f"  {KIND_ICON.get(a.kind, '!')} {a.message}")
     for t in res.trades:
@@ -119,6 +125,53 @@ def edit_settings(m: Monitor):
     print("已儲存")
 
 
+def edit_strategies(m: Monitor):
+    keys = list(strat.STRATEGIES)
+    cur = m.settings["strategies"]
+    print("\n=== 策略設定 ===")
+    for i, st in enumerate(strat.STRATEGIES.values(), 1):
+        mark = "★" if st.key == cur[0] else ("✓" if st.key in cur else " ")
+        print(f" {mark} {i}. {st.name:<8} {st.description}")
+    print("★ = 主策略（自動交易只跟它）  ✓ = 只提醒")
+    raw = ask(f"要用哪些策略？輸入編號，用逗號分隔，第一個當主策略 "
+              f"[{','.join(str(keys.index(k) + 1) for k in cur)}]: ", str, "")
+    if raw:
+        try:
+            picked = [keys[int(x) - 1] for x in raw.replace("，", ",").split(",") if x.strip()]
+        except (ValueError, IndexError):
+            print("⚠ 編號不對，策略沒有變更")
+            return
+        m.set_strategies(picked)
+    yn = ask("要調整策略參數嗎？y/n [n]: ", str, "n")
+    if yn.lower().startswith("y"):
+        sp = m.settings.setdefault("strategy_params", {})
+        for key in m.settings["strategies"]:
+            if key == "ma":
+                print("  均線交叉的天數請在「11 設定」調整")
+                continue
+            st = strat.get(key)
+            cur_p = {**st.defaults, **sp.get(key, {})}
+            print(f"  {st.name}：")
+            for k, v in cur_p.items():
+                cur_p[k] = ask(f"    {k} [{v:g}]: ", float, v)
+            try:
+                st.run(_dummy_df(st), **cur_p)
+            except ValueError as e:
+                print(f"  ⚠ {e}，{st.name} 參數沒有變更")
+                continue
+            sp[key] = {k: v for k, v in cur_p.items() if v != st.defaults[k]}
+    m.save()
+    print("已儲存，主策略：" + strat.get(m.primary_strategy).name)
+
+
+def _dummy_df(st):
+    """產生足夠長的假資料，用來檢查參數組合是否合理。"""
+    import pandas as pd
+    n = 400
+    c = pd.Series(range(1, n + 1), dtype=float)
+    return pd.DataFrame({"Open": c, "High": c, "Low": c, "Close": c})
+
+
 def loop(m: Monitor):
     print(f"開始自動看盤，每 {m.settings['interval']} 秒更新，按 Ctrl+C 回選單")
     try:
@@ -135,8 +188,10 @@ MENU = """
  3 新增自選股        4 刪除自選股       5 設定價格上下限
  6 帳戶總覽          7 買進             8 賣出
  9 交易紀錄         10 提醒紀錄        11 設定
+12 策略設定
  0 離開
 自選股：{watch}
+策略：{strategies}
 自動交易：{auto}   資料：{src}"""
 
 
@@ -154,7 +209,9 @@ def main(argv=None):
         print("第一次使用，先幫你加入 2330、0050 當自選股")
 
     while True:
-        print(MENU.format(watch=", ".join(m.watchlist) or "（空）",
+        names = [strat.get(k).name for k in m.settings["strategies"]]
+        names[0] = f"★{names[0]}"
+        print(MENU.format(watch=", ".join(m.watchlist) or "（空）", strategies="、".join(names),
                           auto="開" if m.settings["auto_trade"] else "關",
                           src="示範" if m.settings["demo"] else "Yahoo Finance"))
         try:
@@ -197,6 +254,8 @@ def main(argv=None):
                 show_alerts(m)
             elif choice == "11":
                 edit_settings(m)
+            elif choice == "12":
+                edit_strategies(m)
             elif choice == "0":
                 m.save()
                 print("已存檔，再見！")

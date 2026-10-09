@@ -1,11 +1,11 @@
-"""均線交叉策略回測。
+"""策略回測。
 
 規則（都以當天收盤價成交）：
-- 黃金交叉（短均線由下往上穿過長均線）且空手 → 全部資金買進
-- 死亡交叉且持股 → 全部賣出
+- 策略發出買進訊號且空手 → 全部資金買進
+- 策略發出賣出訊號且持股 → 全部賣出
 - 固定停損：收盤價比買進價跌超過 X% → 賣出
 - 移動停損：收盤價比買進後的最高收盤價回落超過 X% → 賣出
-- 停損出場後要等下一次黃金交叉才會再買
+- 停損出場後要等下一次買進訊號才會再買
 """
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ import numpy as np
 import pandas as pd
 
 from common import costs
-from common.indicators import cross, sma
+from common import strategies as strat
 
-EXIT_CROSS, EXIT_FIXED, EXIT_TRAIL, EXIT_END = "死亡交叉", "固定停損", "移動停損", "期末未平倉"
+EXIT_FIXED, EXIT_TRAIL, EXIT_END = "固定停損", "移動停損", "期末未平倉"
 
 
 @dataclass
@@ -42,10 +42,17 @@ class Trade:
 
 @dataclass
 class Result:
-    data: pd.DataFrame               # 含 short / long / equity / hold_equity 欄
+    data: pd.DataFrame               # 含 equity / hold_equity 欄
+    output: strat.Output             # 策略訊號與指標線（畫圖用）
+    strategy: strat.Strategy
+    params: dict
     trades: list = field(default_factory=list)
     capital: float = 0
     stats: dict = field(default_factory=dict)
+
+    @property
+    def label(self) -> str:
+        return self.strategy.label(**self.params)
 
 
 def _max_drawdown(equity: pd.Series) -> float:
@@ -60,19 +67,16 @@ def _annualized(total_ret: float, days: int) -> float:
     return ((1 + total_ret / 100) ** (1 / years) - 1) * 100
 
 
-def run_backtest(df: pd.DataFrame, short_n: int = 5, long_n: int = 20,
+def run_backtest(df: pd.DataFrame, strategy: str = "ma", params: dict | None = None,
                  capital: float = 1_000_000, stop_loss_pct: float = 0,
                  trailing_pct: float = 0, is_tw_stock: bool = True) -> Result:
-    if short_n >= long_n:
-        raise ValueError("短均線天數必須小於長均線")
-    if len(df) < long_n + 2:
-        raise ValueError(f"資料只有 {len(df)} 天，不夠算 {long_n} 日均線")
+    st = strat.get(strategy)
+    params = params or {}
+    out = st.run(df, **params)
+    signal = out.signal
 
     d = df.copy()
     close = d["Close"].astype(float)
-    d["short"], d["long"] = sma(close, short_n), sma(close, long_n)
-    signal = cross(d["short"], d["long"])
-
     cash, shares = float(capital), 0
     trades: list[Trade] = []
     open_trade: Trade | None = None
@@ -88,7 +92,7 @@ def run_backtest(df: pd.DataFrame, short_n: int = 5, long_n: int = 20,
             elif trailing_pct > 0 and px <= peak * (1 - trailing_pct / 100):
                 reason = EXIT_TRAIL
             elif signal.iloc[i] == -1:
-                reason = EXIT_CROSS
+                reason = out.sell_reason
             if reason:
                 got = costs.sell_proceeds(px, shares, is_tw_stock)
                 cash += got
@@ -125,6 +129,7 @@ def run_backtest(df: pd.DataFrame, short_n: int = 5, long_n: int = 20,
     hold_ret = (d["hold_equity"].iloc[-1] / capital - 1) * 100
     closed = [t for t in trades if t.reason]
     wins = [t for t in closed if t.pnl > 0]
+    in_market = sum(((t.exit_date - t.entry_date).days for t in closed), 0)
     stats = {
         "策略報酬%": strat_ret,
         "買進持有報酬%": hold_ret,
@@ -134,8 +139,22 @@ def run_backtest(df: pd.DataFrame, short_n: int = 5, long_n: int = 20,
         "買進持有最大回撤%": _max_drawdown(d["hold_equity"]),
         "交易次數": len(closed),
         "勝率%": (len(wins) / len(closed) * 100) if closed else 0.0,
+        "持股時間%": (in_market / days * 100) if days else 0.0,
         "總手續費+稅": sum(t.cost - t.entry_price * t.shares for t in closed)
                      + sum(t.exit_price * t.shares - t.proceeds for t in closed),
         "停損出場": {k: sum(t.reason == k for t in closed) for k in (EXIT_FIXED, EXIT_TRAIL)},
     }
-    return Result(d, trades, capital, stats)
+    return Result(d, out, st, params, trades, capital, stats)
+
+
+def compare(df: pd.DataFrame, capital: float = 1_000_000, stop_loss_pct: float = 0,
+            trailing_pct: float = 0, is_tw_stock: bool = True) -> list[Result]:
+    """用預設參數跑所有策略，依報酬率由高到低排序。資料不夠的策略會略過。"""
+    results = []
+    for key in strat.STRATEGIES:
+        try:
+            results.append(run_backtest(df, key, None, capital, stop_loss_pct,
+                                        trailing_pct, is_tw_stock))
+        except ValueError:
+            continue
+    return sorted(results, key=lambda r: r.stats["策略報酬%"], reverse=True)

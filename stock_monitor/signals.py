@@ -1,22 +1,24 @@
 """從最新行情判斷要不要提醒。"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
-from common.indicators import cross, rsi, sma
+from common import strategies as strat
+from common.indicators import rsi, sma
 
 
 @dataclass
 class Alert:
     code: str
-    kind: str      # golden / death / above / below / stop
+    kind: str          # buy / sell / above / below / stop
     message: str
+    strategy: str = ""  # 哪個策略發出的（價格、停損提醒為空）
 
     @property
     def key(self) -> str:
-        return f"{self.code}|{self.kind}"
+        return f"{self.code}|{self.kind}|{self.strategy}"
 
 
 @dataclass
@@ -27,38 +29,68 @@ class Snapshot:
     short_ma: float
     long_ma: float
     rsi: float
-    cross: int  # 今天的交叉：+1 黃金、-1 死亡、0 無
+    signals: dict = field(default_factory=dict)   # 策略代號 → 今天的訊號 +1 / -1 / 0
+    reasons: dict = field(default_factory=dict)   # 策略代號 → (買進理由, 賣出理由)
 
     @property
     def change_pct(self) -> float:
         return (self.price / self.prev_close - 1) * 100 if self.prev_close else 0.0
 
 
-def snapshot(code: str, closes: pd.Series, price: float | None,
-             short_n: int, long_n: int) -> Snapshot:
-    """closes 為日收盤；price 為最新價（盤中），會取代最後一根。"""
-    closes = closes.dropna().astype(float).copy()
-    if len(closes) < 2:
+def strategy_params(settings: dict, key: str) -> dict:
+    """均線策略的天數沿用 short_ma / long_ma 設定，其他策略用 strategy_params。"""
+    p = dict(settings.get("strategy_params", {}).get(key, {}))
+    if key == "ma":
+        p.setdefault("short", settings["short_ma"])
+        p.setdefault("long", settings["long_ma"])
+    return p
+
+
+def snapshot(code: str, df: pd.DataFrame, price: float | None, settings: dict) -> Snapshot:
+    """df 為日 K；price 為最新價（盤中），會取代最後一根的收盤並更新高低點。"""
+    df = df.dropna(subset=["Close"]).astype(float).copy()
+    if len(df) < 2:
         raise ValueError(f"{code} 資料太少")
+    if "High" not in df:
+        df["High"] = df["Close"]
+    if "Low" not in df:
+        df["Low"] = df["Close"]
     if price is not None:
-        closes.iloc[-1] = price
-    s, l = sma(closes, short_n), sma(closes, long_n)
-    c = cross(s, l)
+        last = df.index[-1]
+        df.loc[last, "Close"] = price
+        df.loc[last, "High"] = max(df.loc[last, "High"], price)
+        df.loc[last, "Low"] = min(df.loc[last, "Low"], price)
+    closes = df["Close"]
+
+    signals, reasons = {}, {}
+    for key in settings.get("strategies", ["ma"]):
+        st = strat.get(key)
+        try:
+            out = st.run(df, **strategy_params(settings, key))
+        except ValueError:
+            continue  # 資料不夠這個策略用，就不判斷
+        signals[key] = int(out.signal.iloc[-1])
+        reasons[key] = (out.buy_reason, out.sell_reason)
+
     return Snapshot(code, float(closes.iloc[-1]), float(closes.iloc[-2]),
-                    float(s.iloc[-1]), float(l.iloc[-1]),
-                    float(rsi(closes).iloc[-1]), int(c.iloc[-1]))
+                    float(sma(closes, settings["short_ma"]).iloc[-1]),
+                    float(sma(closes, settings["long_ma"]).iloc[-1]),
+                    float(rsi(closes).iloc[-1]), signals, reasons)
 
 
 def evaluate(snap: Snapshot, limits: dict, position: dict | None,
              stop_loss_pct: float) -> list[Alert]:
     out = []
     code, p = snap.code, snap.price
-    if snap.cross == 1:
-        out.append(Alert(code, "golden",
-                         f"{code} 黃金交叉（短均 {snap.short_ma:.2f} > 長均 {snap.long_ma:.2f}）"))
-    elif snap.cross == -1:
-        out.append(Alert(code, "death",
-                         f"{code} 死亡交叉（短均 {snap.short_ma:.2f} < 長均 {snap.long_ma:.2f}）"))
+    for key, sig in snap.signals.items():
+        if sig == 0:
+            continue
+        name = strat.get(key).name
+        buy_why, sell_why = snap.reasons[key]
+        if sig == 1:
+            out.append(Alert(code, "buy", f"{code} 買進訊號【{name}】{buy_why}，現價 {p:.2f}", key))
+        else:
+            out.append(Alert(code, "sell", f"{code} 賣出訊號【{name}】{sell_why}，現價 {p:.2f}", key))
     upper, lower = limits.get("upper"), limits.get("lower")
     if upper is not None and p >= upper:
         out.append(Alert(code, "above", f"{code} 突破上限 {upper}，現價 {p:.2f}"))

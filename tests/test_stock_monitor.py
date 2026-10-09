@@ -8,8 +8,8 @@ from common.indicators import cross
 from common.market import parse_symbol
 from stock_monitor.account import Account, TradeError
 from stock_monitor.engine import Monitor
-from stock_monitor.signals import evaluate, snapshot
-from stock_monitor.storage import Store
+from stock_monitor.signals import evaluate, snapshot, strategy_params
+from stock_monitor.storage import DEFAULT_SETTINGS, Store
 
 NOW = datetime(2026, 10, 8, 10, 0)
 
@@ -97,19 +97,44 @@ def test_account_value_and_return():
 
 
 # ---------- 訊號 ----------
-def _closes(vals):
-    return pd.Series(vals, dtype=float)
+def _df(vals):
+    c = pd.Series(vals, dtype=float)
+    return pd.DataFrame({"Open": c, "High": c, "Low": c, "Close": c})
+
+
+def _settings(**kw):
+    return {**DEFAULT_SETTINGS, "short_ma": 2, "long_ma": 5, **kw}
 
 
 def test_snapshot_golden_cross_today():
-    closes = _closes([10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 20])
-    snap = snapshot("X", closes, None, 2, 5)
-    assert snap.cross == 1
+    snap = snapshot("X", _df([10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 20]), None, _settings())
+    assert snap.signals == {"ma": 1}
+    [a] = evaluate(snap, {}, None, 0)
+    assert a.kind == "buy" and a.strategy == "ma" and "黃金交叉" in a.message
+
+
+def test_snapshot_live_price_updates_high_low():
+    df = _df([10] * 30)
+    snap = snapshot("X", df, 12, _settings(strategies=["breakout"]))
+    assert snap.price == 12 and snap.signals == {"breakout": 1}  # 盤中價創新高
+
+
+def test_snapshot_multiple_strategies_and_skip_short_data():
+    snap = snapshot("X", _df([10] * 17), None, _settings(strategies=["ma", "macd", "rsi"]))
+    assert "macd" not in snap.signals  # MACD 需要 37 天以上
+    assert set(snap.signals) == {"ma", "rsi"}
+
+
+def test_custom_strategy_params_used():
+    st = _settings(strategies=["rsi", "ma"], strategy_params={"rsi": {"low": 45}})
+    assert strategy_params(st, "rsi") == {"low": 45}
+    assert strategy_params(st, "ma") == {"short": 2, "long": 5}  # 沿用 short_ma / long_ma
+    snap = snapshot("X", _df([10] * 30), None, st)
+    assert "45" in snap.reasons["rsi"][0]
 
 
 def test_evaluate_limits_and_stop():
-    closes = _closes([100] * 30)
-    snap = snapshot("X", closes, 85, 5, 20)
+    snap = snapshot("X", _df([100] * 30), 85, _settings(short_ma=5, long_ma=20))
     alerts = evaluate(snap, {"lower": 90, "upper": 120}, {"shares": 10, "avg_cost": 100}, 10)
     kinds = {a.kind for a in alerts}
     assert {"below", "stop"} <= kinds and "above" not in kinds
@@ -125,7 +150,7 @@ class FakeFeed:
 
     def __call__(self, name, demo, now):
         closes, price = self.data[name]
-        return name, _closes(closes), price
+        return name, _df(closes), price
 
 
 def make_monitor(tmp_path, **settings):
@@ -136,17 +161,17 @@ def make_monitor(tmp_path, **settings):
 
 
 GOLDEN = [10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 20]
-DEATH = [10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 2]
+DEATH = [10, 10, 10, 10, 11, 11, 11, 11, 11, 12, 2]  # 前一天短均在上，今天跌破
 
 
 def test_alert_only_once_per_day(tmp_path):
     m, feed = make_monitor(tmp_path)
     m.add("2330")
     feed.data["2330"] = (GOLDEN, 20)
-    assert [a.kind for a in m.refresh(NOW).alerts] == ["golden"]
+    assert [a.kind for a in m.refresh(NOW).alerts] == ["buy"]
     assert m.refresh(NOW + timedelta(minutes=5)).alerts == []
     # 隔天同樣狀況會再響
-    assert [a.kind for a in m.refresh(NOW + timedelta(days=1)).alerts] == ["golden"]
+    assert [a.kind for a in m.refresh(NOW + timedelta(days=1)).alerts] == ["buy"]
     assert "黃金交叉" in (tmp_path / "monitor.log").read_text(encoding="utf-8")
 
 
@@ -224,3 +249,31 @@ def test_demo_fetcher_runs(tmp_path):
     m.add("AAPL")
     res = m.refresh(NOW)
     assert not res.errors and set(res.snapshots) == {"2330", "AAPL"}
+
+
+def test_auto_trade_follows_primary_strategy_only(tmp_path):
+    m, feed = make_monitor(tmp_path, auto_trade=True)
+    m.set_strategies(["breakout", "ma"])   # 主策略 = 突破新高
+    m.add("2330")
+    feed.data["2330"] = ([10] * 20 + [9] * 6 + [20], 20)  # 均線黃金交叉，也創 20 日新高
+    res = m.refresh(NOW)
+    assert {(a.kind, a.strategy) for a in res.alerts} >= {("buy", "ma"), ("buy", "breakout")}
+    assert len(res.trades) == 1 and "突破新高" in res.trades[0]["reason"]
+
+    m.set_strategies(["macd", "ma"])       # 只有均線出賣訊號，不是主策略 → 不賣
+    feed.data["2330"] = (DEATH, 2)
+    m.settings["stop_loss_pct"] = 0
+    res = m.refresh(NOW + timedelta(days=1))
+    assert any(a.kind == "sell" and a.strategy == "ma" for a in res.alerts)
+    assert not res.trades and m.account.holds("2330")
+
+
+def test_set_strategies_validation(tmp_path):
+    m, _ = make_monitor(tmp_path)
+    m.set_strategies(["KD", "rsi", "kd"])
+    assert m.settings["strategies"] == ["kd", "rsi"]
+    with pytest.raises(ValueError):
+        m.set_strategies(["nope"])
+    with pytest.raises(ValueError):
+        m.set_strategies([])
+    assert Monitor(Store(tmp_path)).settings["strategies"] == ["kd", "rsi"]

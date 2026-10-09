@@ -7,12 +7,14 @@ from datetime import datetime
 from pathlib import Path
 
 DEFAULT_SETTINGS = {
-    "short_ma": 5,
+    "strategies": ["ma"],       # 要判斷的策略；第一個是自動交易用的主策略
+    "strategy_params": {},      # 例 {"rsi": {"low": 25}}，沒寫的用預設值
+    "short_ma": 5,              # 均線策略與報價表的短 / 長均線
     "long_ma": 20,
     "interval": 60,             # 自動更新間隔（秒）
     "stop_loss_pct": 8.0,       # 持股虧損超過幾 % 觸發停損
     "auto_trade": False,        # 是否自動模擬交易
-    "auto_buy_amount": 100000,  # 黃金交叉時每次買進金額
+    "auto_buy_amount": 100000,  # 主策略出現買進訊號時，每次買進的金額
     "demo": False,              # 示範資料（不連網）
 }
 INITIAL_CASH = 1_000_000
