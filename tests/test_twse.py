@@ -98,6 +98,7 @@ def test_parse_mis():
     assert q["6488"].price == 402.5            # 沒成交 → 最佳買價
     assert q["t00"].volume is None             # 指數沒有股數
     assert q["2330"].change_pct == pytest.approx(15 / 985 * 100)
+    assert q["2330"].time == datetime(2024, 10, 3, 15, 30)  # 台北時間，和電腦時區無關
 
 
 # ---------- 連線（假的 session） ----------

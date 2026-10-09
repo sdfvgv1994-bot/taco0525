@@ -87,6 +87,11 @@ class DataService:
             out.update(self._load_twse(tw_items))
         except Exception as e:  # noqa: BLE001
             print(f"⚠ 證交所資料抓取失敗（{e}），台灣項目改用 Yahoo", file=sys.stderr)
+        missing = [it.symbol for it in tw_items if it.symbol not in out]
+        if missing and len(missing) < len(tw_items):
+            print(f"⚠ 證交所查不到 {', '.join(missing)}，改用 Yahoo", file=sys.stderr)
+        elif missing:
+            print("⚠ 證交所資料全部抓取失敗，台灣項目改用 Yahoo", file=sys.stderr)
         yahoo_items = [it for it in ALL_ITEMS.values() if it.symbol not in out]
         codes = {yahoo_code(it): it.symbol for it in yahoo_items}
         try:
@@ -110,16 +115,25 @@ class DataService:
     def _load_twse(self, items: list) -> dict:
         end = date.today()
         start = end - timedelta(days=62)
-        quotes = self.twse.realtime([it.symbol for it in items])
+        # 即時報價和歷史資料分開抓，其中一個被擋時另一個還能用
+        try:
+            quotes = self.twse.realtime([it.symbol for it in items])
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠ 證交所即時報價抓取失敗（{e}），改用收盤資料", file=sys.stderr)
+            quotes = {}
         out = {}
         for it in items:
             q = quotes.get(it.symbol)
-            if it.symbol == "^TWII":
-                df = self.twse.index_history(start, end)
-            elif it.symbol == "^TWOII":
-                df = None  # 證交所沒有櫃買指數歷史，走勢圖另外找 Yahoo
-            else:
-                _, df = self.twse.history(it.symbol, start, end)
+            try:
+                if it.symbol == "^TWII":
+                    df = self.twse.index_history(start, end)
+                elif it.symbol == "^TWOII":
+                    df = None  # 證交所沒有櫃買指數歷史，走勢圖另外找 Yahoo
+                else:
+                    _, df = self.twse.history(it.symbol, start, end)
+            except Exception as e:  # noqa: BLE001
+                print(f"⚠ 證交所 {it.symbol} 歷史資料抓取失敗（{e}）", file=sys.stderr)
+                df = None
             if q is None or q.price is None:
                 if df is None or df.empty:
                     continue

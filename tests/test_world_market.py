@@ -57,19 +57,23 @@ class FakeYahoo:
 
 
 class FakeTwse:
-    def __init__(self, fail=False):
-        self.fail = fail
+    def __init__(self, fail=False, fail_realtime=False):
+        self.fail, self.fail_realtime = fail, fail_realtime
 
     def realtime(self, items):
-        if self.fail:
+        if self.fail or self.fail_realtime:
             raise twse.TwseError("blocked")
         t = datetime(2026, 10, 9, 10, 0)
         return {i: twse.Quote(i, f"名稱{i}", "tse", 200.0, 190.0, 195, 201, 189, 1000, t) for i in items}
 
     def index_history(self, s, e):
+        if self.fail:
+            raise twse.TwseError("blocked")
         return fake_df()
 
     def history(self, code, s, e, market="auto"):
+        if self.fail:
+            raise twse.TwseError("blocked")
         return "tse", fake_df()
 
 
@@ -96,6 +100,17 @@ def test_overview_twse_failure_falls_back_to_yahoo(capsys):
     assert items["2330"]["source"] == "Yahoo Finance"
     assert "2330.TW" in yh.calls[0][0]
     assert "改用 Yahoo" in capsys.readouterr().err
+
+
+def test_overview_realtime_failure_keeps_twse_history(capsys):
+    yh = FakeYahoo()
+    ov = DataService(yahoo_download=yh, twse_client=FakeTwse(fail_realtime=True)).overview()
+    items = {i["symbol"]: i for g in ov["groups"] for i in g["items"]}
+    assert items["2330"]["source"] == "證交所"     # 即時報價被擋，仍用證交所收盤
+    assert items["^TWII"]["source"] == "證交所"
+    assert items["^TWOII"]["source"] == "Yahoo Finance"  # 證交所沒有櫃買指數歷史
+    assert all("2330.TW" not in syms for syms, _ in yh.calls)
+    assert "即時報價抓取失敗" in capsys.readouterr().err
 
 
 def test_overview_yahoo_failure_shows_errors():

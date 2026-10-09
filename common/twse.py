@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -38,6 +39,7 @@ URL_MIS = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 
 # 即時報價裡的指數代號
 MIS_INDEX = {"^TWII": "tse_t00.tw", "^TWOII": "otc_o00.tw"}
+TPE = ZoneInfo("Asia/Taipei")
 
 
 class TwseError(RuntimeError):
@@ -175,7 +177,8 @@ def parse_mis(js: dict) -> dict:
         ts = None
         if it.get("tlong"):
             try:
-                ts = datetime.fromtimestamp(int(it["tlong"]) / 1000)
+                # 一律換成台北時間，電腦不在台灣時日期才不會差一天
+                ts = datetime.fromtimestamp(int(it["tlong"]) / 1000, TPE).replace(tzinfo=None)
             except (TypeError, ValueError):
                 pass
         vol = num(it.get("v"))
