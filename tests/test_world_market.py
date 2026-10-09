@@ -95,6 +95,7 @@ def test_overview_twse_failure_falls_back_to_yahoo(capsys):
     items = {i["symbol"]: i for g in ov["groups"] for i in g["items"]}
     assert items["2330"]["source"] == "Yahoo Finance"
     assert "2330.TW" in yh.calls[0][0]
+    assert "^TWOII" not in yh.calls[0][0] and "證交所" in items["^TWOII"]["error"]
     assert "改用 Yahoo" in capsys.readouterr().err
 
 

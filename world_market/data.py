@@ -85,6 +85,8 @@ class DataService:
             out.update(self._load_twse(tw_items))
         except Exception as e:  # noqa: BLE001
             print(f"⚠ 證交所資料抓取失敗（{e}），台灣項目改用 Yahoo", file=sys.stderr)
+        if "^TWOII" not in out:  # Yahoo 沒有櫃買指數，只能靠證交所即時報價
+            out["^TWOII"] = {"error": "證交所即時報價暫時抓不到"}
         yahoo_items = [it for it in ALL_ITEMS.values() if it.symbol not in out]
         codes = {yahoo_code(it): it.symbol for it in yahoo_items}
         try:
