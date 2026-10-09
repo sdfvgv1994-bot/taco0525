@@ -15,6 +15,7 @@ DEFAULT_SETTINGS = {
     "stop_loss_pct": 8.0,       # 持股虧損超過幾 % 觸發停損
     "auto_trade": False,        # 是否自動模擬交易
     "auto_buy_amount": 100000,  # 主策略出現買進訊號時，每次買進的金額
+    "source": "auto",           # 資料來源：auto（台股用證交所）/ twse / yahoo
     "demo": False,              # 示範資料（不連網）
 }
 INITIAL_CASH = 1_000_000

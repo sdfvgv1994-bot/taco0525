@@ -232,6 +232,8 @@ def build_parser():
     ap.add_argument("--capital", type=float, default=1_000_000, help="本金（預設 100 萬）")
     ap.add_argument("--stop-loss", type=float, default=0, help="固定停損 %%，0 = 不用")
     ap.add_argument("--trailing", type=float, default=0, help="移動停損 %%，0 = 不用")
+    ap.add_argument("--source", choices=["auto", "twse", "yahoo"], default="auto",
+                    help="資料來源：auto（台股用證交所，失敗改 Yahoo）/ twse / yahoo")
     ap.add_argument("--demo", action="store_true", help="示範資料，不連網")
     ap.add_argument("--no-plot", action="store_true", help="不產生圖表")
     return ap
@@ -251,7 +253,7 @@ def main(argv=None):
     try:
         sym = parse_symbol(args.symbol)
         code, df = fetch_history(sym, period=args.period, start=args.start, end=args.end,
-                                 demo=args.demo)
+                                 demo=args.demo, source=args.source)
         safe = code.replace("^", "")
         if args.compare:
             results = compare(df, args.capital, args.stop_loss, args.trailing, sym.is_tw_stock)

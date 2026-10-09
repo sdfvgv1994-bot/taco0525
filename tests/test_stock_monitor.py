@@ -148,14 +148,14 @@ class FakeFeed:
     def __init__(self):
         self.data = {}
 
-    def __call__(self, name, demo, now):
+    def __call__(self, name, settings, now, quotes):
         closes, price = self.data[name]
         return name, _df(closes), price
 
 
 def make_monitor(tmp_path, **settings):
     feed = FakeFeed()
-    m = Monitor(Store(tmp_path), fetcher=feed)
+    m = Monitor(Store(tmp_path), fetcher=feed, realtime=lambda items: {})
     m.settings.update(short_ma=2, long_ma=5, stop_loss_pct=10, **settings)
     return m, feed
 

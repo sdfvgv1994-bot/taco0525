@@ -8,3 +8,4 @@ stock_backtest/output/
 snake/highscore.json
 kaleidoscope/drawings/
 .pytest_cache/
+.cache/

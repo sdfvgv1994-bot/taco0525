@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,12 @@ from common import strategies as strat  # noqa: E402
 from stock_monitor.account import TradeError  # noqa: E402
 from stock_monitor.engine import Monitor  # noqa: E402
 from stock_monitor.storage import Store  # noqa: E402
+
+def pad(text: str, width: int) -> str:
+    """依「顯示寬度」補空白（中文字佔兩格），讓表格對齊。"""
+    w = sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+    return text + " " * max(0, width - w)
+
 
 KIND_ICON = {"buy": "🟢", "sell": "🔴", "above": "⬆️ ", "below": "⬇️ ", "stop": "🛑",
              "golden": "🟢", "death": "🔴"}  # 後兩個是舊版提醒紀錄用的
@@ -29,7 +36,7 @@ def bell():
 def show_quotes(m: Monitor, res):
     names = "、".join(strat.get(k).name for k in m.settings["strategies"])
     print(f"\n=== 報價 {datetime.now():%H:%M:%S}（策略：{names}）===")
-    print(f"{'代號':<10}{'現價':>10}{'漲跌%':>8}{'MA' + str(m.settings['short_ma']):>10}"
+    print(f"{pad('代號', 14)}{'現價':>10}{'漲跌%':>8}{'MA' + str(m.settings['short_ma']):>10}"
           f"{'MA' + str(m.settings['long_ma']):>10}{'RSI':>6}  趨勢  持股")
     for name in m.watchlist:
         if name in res.errors:
@@ -41,7 +48,8 @@ def show_quotes(m: Monitor, res):
         trend = "多" if s.short_ma > s.long_ma else "空"
         pos = m.account.positions.get(name)
         held = f"{pos['shares']} 股" if pos else ""
-        print(f"{name:<10}{s.price:>10.2f}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"
+        label = f"{name} {m.names.get(name, '')}".strip()
+        print(f"{pad(label, 14)}{s.price:>10.2f}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"
               f"{s.long_ma:>10.2f}{s.rsi:>6.0f}   {trend}   {held}")
         today = [f"{'買' if v == 1 else '賣'}:{strat.get(k).name}" for k, v in s.signals.items() if v]
         if today:
@@ -198,11 +206,14 @@ MENU = """
 def main(argv=None):
     ap = argparse.ArgumentParser(description="自動看盤系統")
     ap.add_argument("--demo", action="store_true", help="使用示範資料（不連網）")
+    ap.add_argument("--source", choices=["auto", "twse", "yahoo"], default="auto",
+                    help="資料來源：auto（台股用證交所，失敗改 Yahoo）/ twse / yahoo")
     ap.add_argument("--data", default=str(Path(__file__).parent / "data"), help="存檔資料夾")
     args = ap.parse_args(argv)
 
     m = Monitor(Store(args.data))
     m.settings["demo"] = args.demo  # 每次執行由參數決定，不沿用上次
+    m.settings["source"] = args.source
     if not m.watchlist:
         for code in ("2330", "0050"):
             m.add(code)
@@ -213,7 +224,9 @@ def main(argv=None):
         names[0] = f"★{names[0]}"
         print(MENU.format(watch=", ".join(m.watchlist) or "（空）", strategies="、".join(names),
                           auto="開" if m.settings["auto_trade"] else "關",
-                          src="示範" if m.settings["demo"] else "Yahoo Finance"))
+                          src="示範" if m.settings["demo"] else
+                          {"auto": "證交所（台股）＋ Yahoo（其他）", "twse": "證交所",
+                           "yahoo": "Yahoo Finance"}[m.settings["source"]]))
         try:
             choice = input("> ").strip()
             if choice == "1":

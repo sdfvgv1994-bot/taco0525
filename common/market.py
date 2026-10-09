@@ -6,13 +6,20 @@
 - 常見加密貨幣（BTC、ETH…）→ XXX-USD
 - 其他（含 ^ 或 - 或 . 的完整代號）→ 原樣使用
 
+資料來源（source）：
+- auto（預設）：台股、加權指數先找證交所 / 櫃買中心，失敗才改用 Yahoo；其他用 Yahoo
+- twse：台股只用證交所，失敗就報錯
+- yahoo：全部用 Yahoo Finance
+
 示範模式（demo=True）不連網，用代號當種子產生可重現的隨機走勢，方便測試。
 """
 from __future__ import annotations
 
 import hashlib
 import re
+import sys
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -90,9 +97,54 @@ def _flatten(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+PERIOD_DAYS = {"1mo": 31, "3mo": 92, "6mo": 183, "1y": 366, "2y": 731, "5y": 1827,
+               "10y": 3653}
+SOURCES = ("auto", "twse", "yahoo")
+
+
+def uses_twse(sym: Symbol) -> bool:
+    return sym.is_tw_stock or sym.candidates[0] == "^TWII"
+
+
+def _date_range(period: str, start, end) -> tuple[date, date]:
+    end_d = pd.Timestamp(end).date() if end else date.today()
+    if start:
+        return pd.Timestamp(start).date(), end_d
+    if period not in PERIOD_DAYS:
+        raise ValueError(f"期間只支援 {', '.join(PERIOD_DAYS)}")
+    return end_d - timedelta(days=PERIOD_DAYS[period]), end_d
+
+
+def fetch_twse(sym: Symbol, period: str = "2y", start=None, end=None,
+               client=None) -> tuple[str, pd.DataFrame]:
+    from . import twse
+    cl = client or twse.client()
+    s, e = _date_range(period, start, end)
+    if sym.candidates[0] == "^TWII":
+        df = cl.index_history(s, e)
+        code = "^TWII"
+    else:
+        base = sym.candidates[0].split(".")[0]
+        hint = "otc" if sym.candidates[0].endswith(".TWO") and len(sym.candidates) == 1 else "auto"
+        market, df = cl.history(base, s, e, hint)
+        code = f"{base}.TW" if market == "tse" else f"{base}.TWO"
+    if df.empty:
+        raise RuntimeError(f"證交所 / 櫃買中心查不到「{sym.raw}」的資料")
+    return code, df
+
+
 def fetch_history(sym: Symbol, period: str = "2y", start=None, end=None,
-                  demo: bool = False) -> tuple[str, pd.DataFrame]:
+                  demo: bool = False, source: str = "auto") -> tuple[str, pd.DataFrame]:
     """回傳 (實際使用的代號, 日 K DataFrame)。抓不到就丟 RuntimeError。"""
+    if source not in SOURCES:
+        raise ValueError(f"資料來源只能是 {', '.join(SOURCES)}")
+    if not demo and source != "yahoo" and uses_twse(sym):
+        try:
+            return fetch_twse(sym, period, start, end)
+        except Exception as e:  # noqa: BLE001 - 網路錯誤種類很多
+            if source == "twse":
+                raise RuntimeError(f"證交所資料抓取失敗：{e}") from e
+            print(f"⚠ 證交所資料抓取失敗（{e}），改用 Yahoo Finance", file=sys.stderr)
     if demo:
         code = sym.candidates[0]
         days = {"1mo": 22, "3mo": 66, "6mo": 130, "1y": 250, "2y": 500,

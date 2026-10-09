@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import pandas as pd
+
 from common import costs
 from common import strategies as strat
-from common.market import fetch_history, parse_symbol
+from common.market import fetch_history, parse_symbol, uses_twse
 
 from .account import Account, TradeError
 from .signals import Alert, Snapshot, evaluate, snapshot
@@ -15,10 +18,29 @@ from .signals import Alert, Snapshot, evaluate, snapshot
 ALERT_HISTORY_MAX = 1000
 
 
-def default_fetcher(name: str, demo: bool, now: datetime):
-    """回傳 (Yahoo 代號, 日 K DataFrame, 最新價)。"""
+def with_live_bar(df: pd.DataFrame, quote) -> pd.DataFrame:
+    """證交所日成交收盤後才更新；盤中用即時報價補上今天這一根 K 棒。"""
+    if quote is None or quote.price is None or quote.time is None:
+        return df
+    today = pd.Timestamp(quote.time.date())
+    if len(df) and df.index[-1] >= today:
+        return df
+    p = quote.price
+    row = pd.DataFrame({"Open": [quote.open or p], "High": [max(quote.high or p, p)],
+                        "Low": [min(quote.low or p, p)], "Close": [p],
+                        "Volume": [quote.volume or 0]}, index=[today])
+    return pd.concat([df, row])
+
+
+def default_fetcher(name: str, settings: dict, now: datetime, quotes: dict):
+    """回傳 (代號, 日 K DataFrame, 最新價)。quotes 是事先批次查好的證交所即時報價。"""
+    demo = settings.get("demo", False)
     sym = parse_symbol(name)
-    code, df = fetch_history(sym, period="1y", demo=demo, end=now.date() if demo else None)
+    code, df = fetch_history(sym, period="1y", demo=demo, end=now.date() if demo else None,
+                             source=settings.get("source", "auto"))
+    quote = quotes.get(name)
+    if quote is not None and quote.price is not None:
+        return code, with_live_bar(df, quote), float(quote.price)
     price = float(df["Close"].iloc[-1])
     if demo:
         # 示範模式：每分鐘給一點隨機跳動，模擬盤中價格變化
@@ -37,7 +59,9 @@ class RefreshResult:
 
 
 class Monitor:
-    def __init__(self, store, fetcher=default_fetcher):
+    def __init__(self, store, fetcher=default_fetcher, realtime=None):
+        # realtime(items) → {項目: Quote}；預設用證交所即時報價，測試時可換成假的
+        self._realtime = realtime
         self.store = store
         self.fetcher = fetcher
         self.settings = store.settings()
@@ -45,6 +69,7 @@ class Monitor:
         self.account = Account.from_dict(store.load("account.json", None))
         self.alert_state = store.load("alerts.json", {"date": "", "fired": [], "history": []})
         self.last_prices: dict = {}
+        self.names: dict = {}   # 代號 → 股名（證交所即時報價提供）
 
     # ---- 存檔 ----
     def save(self):
@@ -111,13 +136,37 @@ class Monitor:
         return True
 
     # ---- 更新 ----
+    def realtime_quotes(self) -> dict:
+        """台股自選股一次向證交所查即時報價；示範模式或指定 Yahoo 時不查。"""
+        s = self.settings
+        if s.get("demo") or s.get("source", "auto") == "yahoo":
+            return {}
+        tw = [n for n in self.watchlist if uses_twse(parse_symbol(n))]
+        if not tw:
+            return {}
+        items = ["^TWII" if parse_symbol(n).candidates[0] == "^TWII" else n.split(".")[0]
+                 for n in tw]
+        try:
+            if self._realtime is None:
+                from common import twse
+                self._realtime = twse.client().realtime
+            got = self._realtime(items)
+        except Exception as e:  # noqa: BLE001 - 查不到就退回用日 K 收盤價
+            print(f"⚠ 證交所即時報價失敗（{e}），改用日 K 最後收盤價", file=sys.stderr)
+            return {}
+        return {n: got[i] for n, i in zip(tw, items) if i in got}
+
     def refresh(self, now: datetime | None = None) -> RefreshResult:
         now = now or datetime.now()
         s = self.settings
         res = RefreshResult()
+        quotes = self.realtime_quotes()
+        for name, q in quotes.items():
+            if q.name and q.name != name:
+                self.names[name] = q.name
         for name, limits in list(self.watchlist.items()):
             try:
-                _, df, price = self.fetcher(name, s["demo"], now)
+                _, df, price = self.fetcher(name, s, now, quotes)
                 snap = snapshot(name, df, price, s)
             except Exception as e:  # noqa: BLE001 - 一檔失敗不影響其他檔
                 res.errors[name] = str(e)
