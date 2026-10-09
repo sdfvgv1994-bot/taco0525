@@ -126,7 +126,7 @@ class FakeSession:
     def __init__(self, router):
         self.router, self.calls = router, []
 
-    def get(self, url, params=None, timeout=None):
+    def get(self, url, params=None, timeout=None, **kw):
         self.calls.append((url, dict(params or {})))
         return FakeResp(self.router(url, params or {}))
 
@@ -188,7 +188,7 @@ def test_otc_fallback(tmp_path):
 def test_tpex_old_api_backup(tmp_path):
     def route(url, p):
         if url == twse.URL_TPEX:
-            return {"stat": "ok", "tables": [{"data": []}]}
+            return {"unexpected": "format"}   # 新版格式認不得 → 改用舊網址
         if url == twse.URL_TPEX_OLD:
             assert p["d"] == "113/10"
             return TPEX_OLD
@@ -205,7 +205,7 @@ def test_blocked_html_response(tmp_path):
 
 def test_http_error(tmp_path):
     class S(FakeSession):
-        def get(self, url, params=None, timeout=None):
+        def get(self, url, params=None, timeout=None, **kw):
             return FakeResp({}, status=503)
     cl = twse.TwseClient(cache_dir=tmp_path, session=S(None), min_interval=0)
     with pytest.raises(twse.TwseError, match="503"):
@@ -321,3 +321,117 @@ def test_monitor_skips_realtime_for_yahoo_source(tmp_path):
     m.settings["source"] = "yahoo"
     m.watchlist = {"2330": {}}
     assert m.realtime_quotes() == {}
+
+
+# ---------- 跨程式限速與封鎖保護 ----------
+def test_gate_shared_between_clients(tmp_path, monkeypatch):
+    """兩個不同的 TwseClient（模擬兩個程式）共用快取資料夾時，也要排隊。"""
+    sleeps = []
+    monkeypatch.setattr(twse.time, "sleep", lambda s: sleeps.append(s))
+    a = twse.TwseClient(cache_dir=tmp_path, session=FakeSession(stock_router()), min_interval=3)
+    b = twse.TwseClient(cache_dir=tmp_path, session=FakeSession(stock_router()), min_interval=3)
+    a.stock_month("2330", 2024, 1)
+    b.stock_month("2330", 2024, 2)
+    assert sleeps and 2.5 < sleeps[-1] <= 3
+
+
+def test_gate_per_host(tmp_path, monkeypatch):
+    """證交所和櫃買中心是不同網站，各自排隊。"""
+    sleeps = []
+    monkeypatch.setattr(twse.time, "sleep", lambda s: sleeps.append(s))
+    cl, _ = make_client(tmp_path, stock_router(listed=False))
+    cl.min_interval = 3
+    cl._gates.clear()
+    cl.stock_month("6488", 2024, 1)   # www.twse.com.tw
+    cl.tpex_month("6488", 2024, 1)    # www.tpex.org.tw
+    assert not sleeps
+
+
+def test_file_lock_across_processes(tmp_path):
+    """真的開另一個程式拿著鎖，這邊要等它放開。"""
+    import subprocess
+    import sys
+    import time as _t
+    lock = tmp_path / ".gate_x.lock"
+    code = ("import sys, time; sys.path.insert(0, '.'); from common.twse import _file_lock; "
+            "from pathlib import Path\n"
+            f"with _file_lock(Path({str(lock)!r})):\n"
+            "    print('locked', flush=True); time.sleep(1.0)")
+    p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    assert p.stdout.readline().strip() == "locked"
+    t0 = _t.monotonic()
+    with twse._file_lock(lock):
+        waited = _t.monotonic() - t0
+    p.wait(timeout=10)
+    assert waited > 0.5
+
+
+class StatusSession(FakeSession):
+    """先回指定的狀態碼，之後回正常 JSON。"""
+    def __init__(self, first_status, body=None):
+        super().__init__(stock_router())
+        self.first_status, self.body = first_status, body
+
+    def get(self, url, params=None, timeout=None, **kw):
+        self.calls.append((url, dict(params or {}), kw))
+        if len(self.calls) == 1:
+            return FakeResp(self.body if self.body is not None else {}, status=self.first_status)
+        return FakeResp(self.router(url, params or {}))
+
+
+@pytest.mark.parametrize("status,body", [(307, {}), (502, {}), (403, {}), (200, ValueError("html"))])
+def test_block_detected_and_cooldown(tmp_path, status, body):
+    sess = StatusSession(status, body)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=sess, min_interval=0)
+    with pytest.raises(twse.TwseError, match="封鎖"):
+        cl.stock_month("2330", 2024, 1)
+    assert sess.calls[0][2].get("allow_redirects") is False   # 轉址要自己看到，不能被自動跟過去
+    # 冷卻期間：不再連線，直接報錯；其他程式（另一個 client）也看得到
+    other = twse.TwseClient(cache_dir=tmp_path, session=sess, min_interval=0)
+    for c in (cl, other):
+        with pytest.raises(twse.TwseError, match="分鐘內先不連線"):
+            c.stock_month("2330", 2024, 2)
+    assert len(sess.calls) == 1
+    # 櫃買中心不受影響
+    cl.tpex_month("6488", 2024, 1)
+
+
+def test_block_cooldown_expires_and_clears(tmp_path, monkeypatch):
+    sess = StatusSession(307)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=sess, min_interval=0)
+    with pytest.raises(twse.TwseError):
+        cl.stock_month("2330", 2024, 1)
+    monkeypatch.setattr(twse, "BLOCK_COOLDOWN", 0)
+    assert not cl.stock_month("2330", 2024, 1).empty     # 冷卻結束，成功後清掉紀錄
+    monkeypatch.setattr(twse, "BLOCK_COOLDOWN", 3600)
+    assert cl.gate(twse.URL_STOCK_DAY).blocked_remaining() == 0
+
+
+def test_auto_source_skips_twse_while_blocked(tmp_path, monkeypatch, capsys):
+    sess = StatusSession(307)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=sess, min_interval=0)
+    with pytest.raises(twse.TwseError):
+        cl.stock_month("2330", 2024, 1)
+    monkeypatch.setattr(twse, "client", lambda: cl)
+
+    class FakeYF:
+        @staticmethod
+        def download(code, **kw):
+            idx = pd.bdate_range("2024-10-01", periods=3)
+            return pd.DataFrame({"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": [1.0, 2, 3],
+                                 "Volume": 0}, index=idx)
+    import sys
+    monkeypatch.setitem(sys.modules, "yfinance", FakeYF)
+    code, _ = market.fetch_history(parse_symbol("2330"), start="2024-10-01", end="2024-10-31")
+    assert code == "2330.TW" and len(sess.calls) == 1     # 沒有再去敲證交所
+    assert "分鐘內先不連線" in capsys.readouterr().err
+
+
+def test_tpex_empty_month_does_not_touch_old_url(tmp_path):
+    """新版 API 正常回應但那個月沒資料：不要去打舊網址（舊網址可能轉址，會被誤判成封鎖）。"""
+    def route(url, p):
+        if url == twse.URL_TPEX:
+            return {"stat": "ok", "tables": [{"data": []}]}
+        raise AssertionError("不該連舊網址")
+    cl, _ = make_client(tmp_path, route)
+    assert cl.tpex_month("6488", 2024, 10).empty

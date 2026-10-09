@@ -7,24 +7,32 @@
                                （舊版網址 st43_result.php 當備援）
 - 即時報價（上市、上櫃、指數）  mis.twse.com.tw/stock/api/getStockInfo.jsp
 
-證交所會封鎖太頻繁的連線（大約 5 秒 3 次），所以：
-- 每次連線至少間隔 MIN_INTERVAL 秒
+證交所會封鎖太頻繁的連線（大約 5 秒 3 次；實測被封鎖後 20 分鐘以上才解除），所以：
+- 每次連線至少間隔 MIN_INTERVAL 秒，而且是「跨程式」共用：同時開回測、看盤、看板，
+  或連續執行好幾次，都會在快取資料夾的時間紀錄排隊，不會疊加成連發
+- 一偵測到被封鎖（轉址、403、502 安全性頁面、回 HTML），就記下來，BLOCK_COOLDOWN 秒內
+  不再連那個網站，直接報錯（自動模式會改用 Yahoo），避免一直重試讓封鎖時間拉長
 - 歷史資料存在本機快取，過去的月份不會再抓；當月資料 CACHE_TTL 秒後才更新
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-MIN_INTERVAL = 2.0
+MIN_INTERVAL = 3.0
+BLOCK_COOLDOWN = 5 * 60
+BLOCKED_STATUS = (301, 302, 303, 307, 308, 403, 429, 502, 503)
 CACHE_TTL = 15 * 60
 TIMEOUT = 15
 HEADERS = {"User-Agent": "Mozilla/5.0 (taco0525 stock tools)",
@@ -191,6 +199,109 @@ def parse_mis(js: dict) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- 跨程式限速與封鎖紀錄
+@contextmanager
+def _file_lock(path: Path):
+    """跨程式的互斥鎖（Windows 用 msvcrt，其他系統用 fcntl）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # 拿不到會自己重試 10 秒再丟 OSError
+                    break
+                except OSError:
+                    continue
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _read_float(path: Path) -> float:
+    try:
+        return float(path.read_text().strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
+class HostGate:
+    """同一個網站的連線排隊：程式內用執行緒鎖，程式之間用檔案鎖＋上次連線時間。
+
+    state_dir 為 None 時只在程式內限速（測試用）。
+    """
+
+    def __init__(self, host: str, state_dir: Path | None, min_interval: float):
+        self.host = host
+        self.min_interval = min_interval
+        self.state_dir = state_dir
+        self._thread_lock = threading.Lock()
+        self._last = 0.0          # 沒有 state_dir 時用
+        self._blocked_at = 0.0    # 沒有 state_dir 時用
+
+    def _paths(self):
+        d = self.state_dir
+        return d / f".gate_{self.host}.lock", d / f".gate_{self.host}.last", d / f".blocked_{self.host}"
+
+    def blocked_remaining(self) -> float:
+        """還要等幾秒才解除「封鎖中」的紀錄；0 表示沒有被封鎖。"""
+        at = _read_float(self._paths()[2]) if self.state_dir else self._blocked_at
+        return max(0.0, at + BLOCK_COOLDOWN - time.time())
+
+    def mark_blocked(self) -> None:
+        now = time.time()
+        self._blocked_at = now
+        if self.state_dir:
+            path = self._paths()[2]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{now}")
+
+    def clear_blocked(self) -> None:
+        self._blocked_at = 0.0
+        if self.state_dir:
+            try:
+                self._paths()[2].unlink()
+            except FileNotFoundError:
+                pass
+
+    @contextmanager
+    def turn(self):
+        """輪到自己才能連線；結束時記下時間，下一個請求（不論哪個程式）至少再等 min_interval。"""
+        with self._thread_lock:
+            if self.state_dir is None:
+                wait = self._last + self.min_interval - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+                try:
+                    yield
+                finally:
+                    self._last = time.time()
+                return
+            lock_path, last_path, _ = self._paths()
+            with _file_lock(lock_path):
+                wait = _read_float(last_path) + self.min_interval - time.time()
+                if wait > 0:
+                    time.sleep(min(wait, self.min_interval))  # 時鐘被調過也不會等太久
+                try:
+                    yield
+                finally:
+                    last_path.write_text(f"{time.time()}")
+
+
 # ---------------------------------------------------------------- 連線與快取
 def _months(start: date, end: date) -> list:
     out, y, m = [], start.year, start.month
@@ -207,8 +318,15 @@ class TwseClient:
         self._session = session
         self.min_interval = min_interval
         self.progress = progress   # 例如 print，用來顯示「下載中 3/24」
-        self._last = 0.0
-        self._lock = threading.Lock()
+        self._gates: dict = {}
+        self._gates_lock = threading.Lock()
+
+    def gate(self, url: str) -> HostGate:
+        host = urlparse(url).hostname or url
+        with self._gates_lock:
+            if host not in self._gates:
+                self._gates[host] = HostGate(host, self.cache_dir, self.min_interval)
+            return self._gates[host]
 
     @property
     def session(self):
@@ -219,24 +337,29 @@ class TwseClient:
         return self._session
 
     def _get_json(self, url: str, params: dict) -> dict:
-        with self._lock:  # 多執行緒共用同一個限速
-            wait = self._last + self.min_interval - time.monotonic()
-            if wait > 0:
-                time.sleep(wait)
-            try:
-                r = self.session.get(url, params=params, timeout=TIMEOUT)
-            finally:
-                self._last = time.monotonic()
-        if r.status_code in (302, 307, 403, 502):
+        gate = self.gate(url)
+        left = gate.blocked_remaining()
+        if left > 0:
+            raise TwseError(f"{gate.host} 剛剛暫時封鎖了這台電腦的連線，"
+                            f"約 {left / 60:.0f} 分鐘內先不連線（避免封鎖時間被拉長）")
+        with gate.turn():
+            r = self.session.get(url, params=params, timeout=TIMEOUT, allow_redirects=False)
+        if r.status_code in BLOCKED_STATUS:
             # 實測被封鎖時：證交所轉址（307），即時報價回 502 安全性頁面
-            raise TwseError(f"{url} 回應 HTTP {r.status_code}（可能連線太頻繁被暫時封鎖，請過幾分鐘再試）")
+            gate.mark_blocked()
+            raise TwseError(f"{gate.host} 回應 HTTP {r.status_code}"
+                            f"（連線太頻繁被暫時封鎖，{BLOCK_COOLDOWN // 60} 分鐘內先不連線）")
         if r.status_code != 200:
             raise TwseError(f"{url} 回應 HTTP {r.status_code}")
         try:
-            return r.json()
+            js = r.json()
         except ValueError:
-            # 被封鎖時常回 HTML 頁面
-            raise TwseError("回應不是 JSON（可能連線太頻繁被暫時封鎖，請過幾分鐘再試）") from None
+            # 被封鎖時也可能回 200 的 HTML 頁面
+            gate.mark_blocked()
+            raise TwseError(f"{gate.host} 回應不是 JSON（可能被暫時封鎖，"
+                            f"{BLOCK_COOLDOWN // 60} 分鐘內先不連線）") from None
+        gate.clear_blocked()
+        return js
 
     def _cached(self, key: str, is_current: bool, fetch) -> dict:
         path = self.cache_dir / f"{key}.json" if self.cache_dir else None
@@ -267,10 +390,11 @@ class TwseClient:
             try:
                 js = self._get_json(URL_TPEX, {"code": code, "date": f"{y}/{m:02d}/01",
                                                "response": "json"})
-                if js.get("tables") and js["tables"][0].get("data"):
-                    return js
             except TwseError:
-                pass
+                js = None  # 被封鎖的話，下面的舊網址也會直接報錯，不會真的連線
+            # 新版格式正常就用（就算那個月沒資料）；只有格式認不得時才試舊網址
+            if js is not None and ("tables" in js or str(js.get("stat", "")).lower() == "ok"):
+                return js
             return self._get_json(URL_TPEX_OLD, {"l": "zh-tw", "d": f"{y - 1911}/{m:02d}",
                                                  "stkno": code})
         return parse_tpex(self._cached(f"otc_{code}_{y}{m:02d}", cur, fetch))
