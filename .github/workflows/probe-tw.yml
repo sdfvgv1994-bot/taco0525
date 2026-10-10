@@ -1,0 +1,26 @@
+# 暫時的探測：在 GitHub 的機器上抓證交所 / 櫃買中心的資料格式（只在 probe/tw-endpoints 分支執行）
+name: probe-tw
+on:
+  push:
+    branches: [probe/tw-endpoints]
+    paths: [".github/workflows/probe-tw.yml", "probe/gha_probe.py"]
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python probe/gha_probe.py fetch
+      - run: python probe/gha_probe.py report
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add probe/gha
+          git commit -q -m "probe results from the GitHub Actions runner" || true
+          git push -q origin HEAD:probe/tw-endpoints
