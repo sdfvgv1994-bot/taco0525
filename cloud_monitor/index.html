@@ -86,6 +86,8 @@ th:first-child, td:first-child { text-align: left; }
 .card { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
 .card .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .card .name { font-weight: 650; }
+.card a.name { color: inherit; text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+.card a.name:hover { text-decoration: underline; }
 .card .price { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .card .meta { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -115,6 +117,7 @@ dl.settings dd { margin: 0; }
     <span class="updated" id="updated">載入中…</span>
     <span class="spacer"></span>
     <a class="btn" href="../">🌏 全球看板</a>
+    <a class="btn" href="../tw/">🇹🇼 台股總覽</a>
     <a class="btn" id="editBtn" href="#" target="_blank" rel="noopener">⚙️ 修改設定</a>
     <button class="btn" id="colorBtn">紅漲綠跌</button>
   </header>
@@ -315,10 +318,19 @@ function render() {
   for (const [k, v] of rows) dl.append(el("dt", {}, k), el("dd", {}, v));
 }
 
+// 台股個股（4～6 碼，可能帶 .TW / .TWO；不含 ^TWII 這類指數）→ 台股總覽的代號
+function twCode(w) {
+  const m = w.tw && /^(\d{4,6}[A-Z]?)(\.TWO?)?$/i.exec(String(w.code || "").trim());
+  return m ? m[1].toUpperCase() : null;
+}
+
 function watchCard(w) {
   const c = el("div", { class: "card" });
   const top = el("div", { class: "top" });
-  top.append(el("span", { class: "name" }, `${w.name || w.code}`), el("span", { class: "meta" }, w.name ? w.code : ""));
+  const tw = twCode(w);
+  const name = tw ? el("a", { class: "name", href: `../tw/#${tw}`, title: "在台股總覽看詳細資料" }, `${w.name || w.code}`)
+                  : el("span", { class: "name" }, `${w.name || w.code}`);
+  top.append(name, el("span", { class: "meta" }, w.name ? w.code : ""));
   c.append(top);
   if (w.error) { c.append(el("div", { class: "meta" }, "⚠ " + w.error)); return c; }
   const star = w.tw && !w.live ? " *" : "";

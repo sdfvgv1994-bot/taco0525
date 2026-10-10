@@ -1,6 +1,7 @@
 # 雲端版全球股市看板＋雲端看盤：GitHub 的雲端機器每 15 分鐘抓一次資料，產生網頁放到 GitHub Pages。
 # 全球看板：https://sdfvgv1994-bot.github.io/taco0525/
 # 雲端看盤：https://sdfvgv1994-bot.github.io/taco0525/monitor/
+# 台股總覽：https://sdfvgv1994-bot.github.io/taco0525/tw/
 #   設定在 cloud_monitor/config.toml；帳戶等資料存在 monitor-data 分支（每次執行後存回去）
 name: 更新雲端看板
 
@@ -15,6 +16,7 @@ on:
       - "common/**"
       - "cloud_monitor/**"
       - "stock_monitor/**"
+      - "tw_market/**"
       - ".github/workflows/board.yml"
 
 permissions:
@@ -54,6 +56,13 @@ jobs:
           path: .cache/board_history
           key: board-history-${{ github.run_id }}
           restore-keys: board-history-
+
+      # 台股總覽的每日資料（行情、法人、融資融券）：過去的日子存了就不再抓，第一天要分好幾次補齊
+      - uses: actions/cache@v4
+        with:
+          path: .cache/tw
+          key: tw-${{ github.run_id }}
+          restore-keys: tw-
 
       - name: 產生看板網頁
         run: python world_market/build_static.py --out _site
@@ -108,6 +117,20 @@ jobs:
           python cloud_monitor/keep_last.py --out _site/monitor
           --state "${{ steps.state.outcome }}" --monitor "${{ steps.monitor.outcome }}"
           --save "${{ steps.save.outcome }}"
+
+      # ---------------- 台股總覽（出錯也不影響其他網頁發佈） ----------------
+      # 每次最多連每個網站 25 次、抓 4 分鐘，抓不完的下次繼續
+      - name: 產生台股總覽
+        id: tw
+        continue-on-error: true
+        timeout-minutes: 12
+        run: python -m tw_market.build --out _site/tw
+
+      # 抓資料出錯或超時：不連網，只用快取裡已經有的資料重新產生，/tw/ 不會變成 404
+      - name: 台股總覽沒成功時，用快取的資料重新產生
+        if: steps.tw.outcome != 'success'
+        continue-on-error: true
+        run: python -m tw_market.build --out _site/tw --no-fetch
 
       - uses: actions/upload-pages-artifact@v3
         with:
