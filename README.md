@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | [`stock_monitor/`](stock_monitor/) | 自動看盤系統＋模擬下單 | `python stock_monitor/monitor.py` |
 | [`stock_backtest/`](stock_backtest/) | 策略回測：6 種策略、可一次比較（含固定 / 移動停損） | `python stock_backtest/backtest.py 2330 --compare` |
-| [`world_market/`](world_market/) | 全球股市看板（網頁） | `python world_market/app.py` |
+| [`world_market/`](world_market/) | 全球股市看板（網頁；也有[雲端版](https://sdfvgv1994-bot.github.io/taco0525/)，電腦關機也能用手機看） | `python world_market/app.py` |
 | [`snake/`](snake/) | 貪食蛇 | `python snake/snake.py` |
 | [`kaleidoscope/`](kaleidoscope/) | 萬花筒畫板 | `python kaleidoscope/kaleidoscope.py` |
 
@@ -19,6 +19,12 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate    macOS / Linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+## 自動更新
+每個程式啟動時都會先檢查 GitHub 上有沒有新版，有的話自動更新、套件有變就自動安裝，再用新版重新啟動。
+- 本機改過的程式碼會被新版覆蓋，但會先備份到 `.cache/backup/`（沒推上去的提交則留在 `backup/…` 分支）
+- 模擬帳戶、自選股、提醒紀錄、快取等資料不在 git 裡，不會被動到
+- 沒網路時照常用目前版本；不想更新可以加 `--no-update`，或設環境變數 `TACO_NO_UPDATE=1`
 
 ## 資料來源
 - **台股（上市、上櫃）和加權指數**：預設從**台灣證券交易所 / 櫃買中心**的公開 API 抓

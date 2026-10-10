@@ -1,5 +1,21 @@
 # 全球股市看板
 
+## 📱 雲端版（電腦關機也能用手機看）
+
+**網址：https://sdfvgv1994-bot.github.io/taco0525/**
+
+- GitHub 的雲端機器每 15 分鐘抓一次資料、重新產生網頁（`.github/workflows/board.yml`），
+  排程偶爾會晚幾分鐘；網頁本身每分鐘自動檢查有沒有新資料
+- 手機瀏覽器打開後，可以「加入主畫面」，用起來像 App
+- 交易中／休市是手機用當下時間判斷，不受資料晚到影響
+- 網址是公開的，內容只有公開的行情資料，沒有你的自選股或模擬帳戶
+- 第一次要在 GitHub 打開 Pages：倉庫 **Settings → Pages → Build and deployment → Source** 選 **GitHub Actions**
+- 想馬上更新：GitHub 倉庫的 **Actions → 更新雲端看板 → Run workflow**
+- 注意：公開倉庫如果 60 天都沒有任何新的提交，GitHub 會自動暫停排程，
+  到 Actions 頁面按「Enable workflow」就會恢復
+
+## 💻 本機版
+
 ```bash
 python world_market/app.py            # 自動開啟瀏覽器 http://127.0.0.1:8050
 python world_market/app.py --demo     # 示範資料（不連網）

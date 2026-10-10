@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="全球股市">
 <title>全球股市看板</title>
 <style>
 :root {
@@ -178,7 +181,7 @@ th:first-child, td:first-child { text-align: left; }
 
   <div id="groups"><div class="loading">正在載入資料…（第一次向證交所下載資料約需 40 秒，之後幾乎是瞬間）</div></div>
 
-  <p class="note">
+  <p class="note" id="note">
     台灣項目資料來自台灣證券交易所（即時報價）；其他來自 Yahoo Finance，可能有 15 分鐘以上延遲。
     交易時間不含各國國定假日。每 60 秒自動更新。點卡片可看詳細走勢。
   </p>
@@ -202,6 +205,10 @@ th:first-child, td:first-child { text-align: left; }
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+// 雲端版（GitHub Pages）：讀定時產生的靜態資料檔，而不是本機伺服器的 /api
+const STATIC = window.WM_STATIC === true;
+const HIST_DAYS = { "1mo": 31, "3mo": 92, "6mo": 183, "1y": 366, "5y": 1827 };
+const histCache = new Map();
 const NS = "http://www.w3.org/2000/svg";
 const INDEX_GROUPS = ["台灣", "美洲", "亞太", "歐洲"];
 const PERIODS = [["1mo", "1 個月"], ["3mo", "3 個月"], ["6mo", "6 個月"], ["1y", "1 年"], ["5y", "5 年"]];
@@ -250,16 +257,62 @@ function svg(tag, attrs = {}) {
 }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
+// ---------- 交易時間（用瀏覽器當下的時間判斷，雲端資料晚幾分鐘也不會顯示錯） ----------
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function zoned(tz) {
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short",
+                                                hour: "2-digit", minute: "2-digit" });
+  const p = Object.fromEntries(f.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const h = (+p.hour) % 24;
+  return { wd: WEEKDAYS.indexOf(p.weekday), mins: h * 60 + (+p.minute),
+           hhmm: `${String(h).padStart(2, "0")}:${p.minute}` };
+}
+const toMins = (s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+function exStatus(key) {
+  const ex = data && data.exchanges && data.exchanges[key];
+  if (!ex) return null;
+  const t = zoned(ex.tz);
+  if (ex.always === "24/7") return "open";
+  if (ex.always === "24/5") {   // 外匯：週日 17:00 到週五 17:00（紐約時間）
+    const closed = t.wd === 5 || (t.wd === 6 && t.mins < 1020) || (t.wd === 4 && t.mins >= 1020);
+    return closed ? "closed" : "open";
+  }
+  if (t.wd >= 5) return "closed";
+  return ex.sessions.some(([a, b]) => toMins(a) <= t.mins && t.mins < toMins(b)) ? "open" : "closed";
+}
+const statusOf = (it) => exStatus(it.exchange) || it.status;
+function pill(status, text) {
+  const p = el("span", { class: "pill" + (status === "open" ? " open" : "") });
+  p.append(el("span", { class: "dot" }), document.createTextNode(text));
+  return p;
+}
+
 // ---------- 世界時鐘 ----------
 function renderClocks() {
   const box = $("clocks"); box.replaceChildren();
-  for (const c of data.clocks) {
+  const clocks = data.exchanges && data.clock_keys
+    ? data.clock_keys.map((k) => {
+        const ex = data.exchanges[k], t = zoned(ex.tz);
+        return { city: ex.name, time: t.hhmm, weekday: "一二三四五六日"[t.wd], status: exStatus(k) };
+      })
+    : data.clocks;
+  for (const c of clocks) {
     const d = el("div", { class: "clock" });
     d.append(el("div", { class: "city" }, `${c.city}（週${c.weekday}）`), el("div", { class: "time" }, c.time));
-    const p = el("span", { class: "pill" + (c.status === "open" ? " open" : "") });
-    p.append(el("span", { class: "dot" }), document.createTextNode(c.status === "open" ? "交易中" : "休市"));
-    d.append(p); box.append(d);
+    d.append(pill(c.status, c.status === "open" ? "交易中" : "休市"));
+    box.append(d);
   }
+}
+// 卡片上的交易狀態每 30 秒用當下時間更新一次
+function refreshStatuses() {
+  if (!data) return;
+  renderClocks();
+  document.querySelectorAll("[data-ex]").forEach((p) => {
+    const it = { exchange: p.dataset.ex, status: p.dataset.status };
+    const st = statusOf(it);
+    p.className = "pill" + (st === "open" ? " open" : "");
+    p.lastChild.textContent = `${p.dataset.name} ${st === "open" ? "交易中" : "休市"}`;
+  });
 }
 
 // ---------- 篩選 ----------
@@ -354,8 +407,9 @@ function card(it) {
   b.append(el("div", { class: "chg " + dirClass(v) }, chg));
   b.append(sparkline(it.spark, v));
   const foot = el("div", { class: "foot" });
-  const p = el("span", { class: "pill" + (it.status === "open" ? " open" : "") });
-  p.append(el("span", { class: "dot" }), document.createTextNode(`${it.exchange_name} ${it.status === "open" ? "交易中" : "休市"}`));
+  const st = statusOf(it);
+  const p = pill(st, `${it.exchange_name} ${st === "open" ? "交易中" : "休市"}`);
+  p.dataset.ex = it.exchange; p.dataset.status = it.status; p.dataset.name = it.exchange_name;
   foot.append(p, el("span", {}, it.spark ? `近 ${it.spark.length} 日` : ""));
   b.append(foot);
   b.setAttribute("aria-label", `${it.name} ${fmt(it.price, it.decimals)} ${pctText(v)}，點擊看詳細走勢`);
@@ -393,9 +447,7 @@ async function openDetail(it, period) {
   $("tableWrap").replaceChildren();
   if (!$("dlg").open) $("dlg").showModal();
   try {
-    const r = await fetch(`/api/history?symbol=${encodeURIComponent(it.symbol)}&period=${current.period}`);
-    const h = await r.json();
-    if (!r.ok) throw new Error(h.error || r.statusText);
+    const h = await fetchHistory(it.symbol, current.period);
     if (current.it !== it || current.period !== h.period) return;  // 使用者已經切換了
     renderDetail(h);
   } catch (e) {
@@ -403,10 +455,36 @@ async function openDetail(it, period) {
   }
 }
 
+async function fetchHistory(sym, period) {
+  if (!STATIC) {
+    const r = await fetch(`/api/history?symbol=${encodeURIComponent(sym)}&period=${period}`);
+    const h = await r.json();
+    if (!r.ok) throw new Error(h.error || r.statusText);
+    return h;
+  }
+  let full = histCache.get(sym);
+  if (!full) {
+    const r = await fetch(`data/history/${sym.replace(/[^A-Za-z0-9]/g, "_")}.json?v=${data.updated_utc}`);
+    if (!r.ok) throw new Error(r.status === 404 ? "這個項目沒有歷史資料" : `讀取失敗（${r.status}）`);
+    full = await r.json();
+    histCache.set(sym, full);
+  }
+  // 雲端版一次給 5 年，期間在這裡切
+  const last = new Date(full.dates[full.dates.length - 1] + "T00:00:00Z");
+  const cutoff = new Date(last.getTime() - HIST_DAYS[period] * 86400000).toISOString().slice(0, 10);
+  let i = full.dates.findIndex((d) => d >= cutoff);
+  if (i < 0) i = 0;
+  const dates = full.dates.slice(i), close = full.close.slice(i);
+  return { symbol: sym, name: full.name, period, source: full.source, decimals: full.decimals,
+           dates, close, high: Math.max(...close), low: Math.min(...close),
+           change_pct: (close[close.length - 1] / close[0] - 1) * 100, closesOnly: true };
+}
+
 function renderDetail(h) {
   const d = h.decimals, n = h.close.length, last = h.close[n - 1];
   const stats = [["最新", fmt(last, d), ""], ["期間漲跌", pctText(h.change_pct), dirClass(h.change_pct)],
-                 ["期間最高", fmt(h.high, d), ""], ["期間最低", fmt(h.low, d), ""], ["資料來源", h.source, ""]];
+                 [h.closesOnly ? "期間最高（收盤）" : "期間最高", fmt(h.high, d), ""],
+                 [h.closesOnly ? "期間最低（收盤）" : "期間最低", fmt(h.low, d), ""], ["資料來源", h.source, ""]];
   const sb = $("stats"); sb.replaceChildren();
   for (const [k, v, cls] of stats) {
     const s = el("div", { class: "stat" });
@@ -516,10 +594,13 @@ $("tableBtn").onclick = () => {
 async function load(force) {
   $("refreshBtn").disabled = true;
   try {
-    const r = await fetch("/api/overview" + (force ? "?force=1" : ""));
-    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
-    data = await r.json();
-    $("updated").textContent = "更新時間 " + data.updated;
+    const url = STATIC ? `data/overview.json?t=${Date.now()}` : "/api/overview" + (force ? "?force=1" : "");
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(STATIC ? `讀取失敗（${r.status}）` : (await r.json()).error || r.statusText);
+    const next = await r.json();
+    if (STATIC && data && next.updated_utc !== data.updated_utc) histCache.clear();
+    data = next;
+    showUpdated();
     $("demo").hidden = !data.demo;
     if (!data.groups.some((g) => g.name === filter)) filter = "全部";
     renderClocks(); renderFilters(); renderRank(); renderGroups();
@@ -530,6 +611,19 @@ async function load(force) {
   }
 }
 $("refreshBtn").onclick = () => load(true);
+function showUpdated() {
+  if (!data) return;
+  if (!STATIC || !data.updated_utc) { $("updated").textContent = "更新時間 " + data.updated; return; }
+  const mins = Math.max(0, Math.round((Date.now() - Date.parse(data.updated_utc)) / 60000));
+  const ago = mins < 1 ? "剛剛" : mins < 60 ? `${mins} 分鐘前` : `${Math.floor(mins / 60)} 小時 ${mins % 60} 分鐘前`;
+  $("updated").textContent = `資料時間 ${data.updated.slice(5, 16)}（台北，${ago}）` +
+    (mins > 90 ? "　⚠ 雲端更新可能暫停了" : "");
+}
+if (STATIC) {
+  $("note").textContent = "雲端版：GitHub 每 15 分鐘抓一次最新資料（排程偶爾會晚幾分鐘），這個頁面每分鐘自動檢查。" +
+    "台灣項目來自台灣證券交易所，其他來自 Yahoo Finance（可能有 15 分鐘以上延遲）。交易時間不含各國國定假日。點卡片可看詳細走勢。";
+  document.querySelector("#groups .loading").textContent = "正在載入資料…";
+}
 let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
@@ -540,6 +634,7 @@ filter = pref("filter") || "全部";
 applyPrefs();
 load(false);
 setInterval(() => load(false), 60000);
+setInterval(() => { refreshStatuses(); showUpdated(); }, 30000);
 </script>
 </body>
 </html>

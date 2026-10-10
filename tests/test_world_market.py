@@ -212,3 +212,52 @@ def test_overview_realtime_failure_during_session_prefers_yahoo(monkeypatch):
     items = {i["symbol"]: i for g in ov["groups"] for i in g["items"]}
     assert items["2330"]["source"] == "Yahoo Finance"
     assert any("2330.TW" in syms for syms, _ in yh.calls)
+
+
+# ---------- 雲端版（GitHub Pages） ----------
+def test_build_static_demo(tmp_path):
+    from world_market import build_static as bs
+    out = tmp_path / "site"
+    result = bs.build(out, DataService(demo=True), log=lambda *_: None)
+    assert result["ok"] == result["items"] == len(ALL_ITEMS)
+    ov = json.loads((out / "data" / "overview.json").read_text(encoding="utf-8"))
+    assert ov["static"] and ov["exchanges"]["TW"]["tz"] == "Asia/Taipei"
+    assert ov["exchanges"]["JP"]["sessions"] == [["09:00", "11:30"], ["12:30", "15:30"]]
+    assert ov["updated_utc"].endswith("Z")
+    files = {p.name for p in (out / "data" / "history").glob("*.json")}
+    assert len(files) == len(ALL_ITEMS) and "_GSPC.json" in files and "BTC_USD.json" in files
+    h = json.loads((out / "data" / "history" / "_GSPC.json").read_text(encoding="utf-8"))
+    assert len(h["dates"]) == len(h["close"]) > 1000          # 5 年日 K
+    html = (out / "index.html").read_text(encoding="utf-8")
+    assert "window.WM_STATIC = true" in html and (out / ".nojekyll").exists()
+
+
+def test_safe_name_matches_js_rule():
+    from world_market.build_static import safe_name
+    assert [safe_name(s) for s in ("^GSPC", "BTC-USD", "000001.SS", "TWD=X", "2330")] == \
+        ["_GSPC", "BTC_USD", "000001_SS", "TWD_X", "2330"]
+
+
+def test_build_static_real_path_uses_one_yahoo_batch(tmp_path, monkeypatch):
+    from world_market import build_static as bs
+    from world_market import data as wm_data
+    monkeypatch.setattr(wm_data, "fetch_history", lambda sym, period: ("2330.TW", fake_df(300)))
+    yh = FakeYahoo()
+    svc = DataService(yahoo_download=yh, twse_client=FakeTwse())
+    result = bs.build(tmp_path / "site", svc, log=lambda *_: None)
+    five_year = [c for c in yh.calls if c[1] == "5y"]
+    assert len(five_year) == 1                                  # Yahoo 的歷史一次批次下載
+    assert "2330.TW" not in five_year[0][0]                     # 台股走證交所
+    assert "^TWOII" in result["errors"]                         # 櫃買指數沒有歷史來源
+    h = json.loads((tmp_path / "site" / "data" / "history" / "2330.json").read_text(encoding="utf-8"))
+    assert h["source"] == "證交所" and len(h["close"]) == 300
+
+
+def test_build_static_refuses_when_most_items_fail(tmp_path):
+    from world_market import build_static as bs
+
+    def boom(symbols, period):
+        raise ConnectionError("down")
+    svc = DataService(yahoo_download=boom, twse_client=FakeTwse(fail=True))
+    with pytest.raises(SystemExit, match="太少"):
+        bs.build(tmp_path / "site", svc, log=lambda *_: None)

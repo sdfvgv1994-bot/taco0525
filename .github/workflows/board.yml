@@ -1,0 +1,62 @@
+# 雲端版全球股市看板：GitHub 的雲端機器每 15 分鐘抓一次資料，產生網頁放到 GitHub Pages。
+# 網址：https://sdfvgv1994-bot.github.io/taco0525/
+name: 更新雲端看板
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"      # GitHub 排程偶爾會晚幾分鐘
+  workflow_dispatch:            # 也可以在 Actions 頁面手動執行
+  push:
+    branches: [main]
+    paths:
+      - "world_market/**"
+      - "common/**"
+      - ".github/workflows/board.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: board
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: world_market/requirements-board.txt
+
+      - run: pip install -r world_market/requirements-board.txt
+
+      # 證交所的歷史資料存在快取：過去的月份不用再抓，也比較不會被證交所封鎖
+      - uses: actions/cache@v4
+        with:
+          path: .cache/twse
+          key: twse-${{ github.run_id }}
+          restore-keys: twse-
+
+      - name: 產生看板網頁
+        run: python world_market/build_static.py --out _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
