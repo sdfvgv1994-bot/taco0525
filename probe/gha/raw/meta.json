@@ -1,0 +1,169 @@
+{
+ "requests": 18,
+ "last_ts": 1791632802.6721451,
+ "blocked_hosts": {},
+ "results": {
+  "G01": {
+   "url": "https://www.twse.com.tw/rwd/zh/fund/T86?date=20261008&selectType=ALLBUT0999&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 188581,
+   "kind": "json",
+   "location": null,
+   "file": "G01.json.gz"
+  },
+  "G02": {
+   "url": "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date=20261008&selectType=ALL&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 128929,
+   "kind": "json",
+   "location": null,
+   "file": "G02.json.gz"
+  },
+  "G03": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?date=20261008&selectType=ALL&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 66387,
+   "kind": "json",
+   "location": null,
+   "file": "G03.json.gz"
+  },
+  "G04": {
+   "url": "https://www.twse.com.tw/rwd/zh/fund/BFI82U?type=day&dayDate=20261008&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 1569,
+   "kind": "json",
+   "location": null,
+   "file": "G04.json.gz"
+  },
+  "G05": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261009&type=ALLBUT0999&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 71,
+   "kind": "json",
+   "location": null,
+   "file": "G05.json.gz"
+  },
+  "G06": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=20261001&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 1038,
+   "kind": "json",
+   "location": null,
+   "file": "G06.json.gz"
+  },
+  "G07": {
+   "url": "https://www.twse.com.tw/rwd/zh/fund/T86?date=20261009&selectType=ALLBUT0999&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 61,
+   "kind": "json",
+   "location": null,
+   "file": "G07.json.gz"
+  },
+  "G08": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261008&type=ALLBUT0999&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 247290,
+   "kind": "json",
+   "location": null,
+   "file": "G08.json.gz"
+  },
+  "G09": {
+   "url": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 319289,
+   "kind": "json",
+   "location": null,
+   "file": "G09.json.gz"
+  },
+  "G10": {
+   "url": "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 116588,
+   "kind": "json",
+   "location": null,
+   "file": "G10.json.gz"
+  },
+  "G11": {
+   "url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 1327578,
+   "kind": "json",
+   "location": null,
+   "file": "G11.json.gz"
+  },
+  "G12": {
+   "url": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",
+   "status": 200,
+   "content_type": "text/html;charset=MS950",
+   "size": 9027968,
+   "kind": "html",
+   "location": null,
+   "file": "G12.html.gz"
+  },
+  "G13": {
+   "url": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4",
+   "status": 200,
+   "content_type": "text/html;charset=MS950",
+   "size": 3018993,
+   "kind": "html",
+   "location": null,
+   "file": "G13.html.gz"
+  },
+  "G14": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date=2026%2F10%2F09&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 641,
+   "kind": "json",
+   "location": null,
+   "file": "G14.json.gz"
+  },
+  "G15": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026%2F10%2F09&id=&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 1630,
+   "kind": "json",
+   "location": null,
+   "file": "G15.json.gz"
+  },
+  "G16": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/margin/balance?date=2026%2F10%2F09&id=&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 419,
+   "kind": "json",
+   "location": null,
+   "file": "G16.json.gz"
+  },
+  "G17": {
+   "url": "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date=20261009&selectType=ALL&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 50,
+   "kind": "json",
+   "location": null,
+   "file": "G17.json.gz"
+  },
+  "G18": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?date=20260601&selectType=ALL&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 66038,
+   "kind": "json",
+   "location": null,
+   "file": "G18.json.gz"
+  }
+ }
+}
