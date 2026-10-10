@@ -24,5 +24,11 @@
     "short_ma": 5,
     "long_ma": 20
   },
-  "strategy_params": {}
+  "strategy_params": {},
+  "notify": {
+    "enabled": true,
+    "trades": true,
+    "signals": "primary",
+    "price_alerts": true
+  }
 }
