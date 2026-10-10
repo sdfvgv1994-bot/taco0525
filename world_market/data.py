@@ -184,8 +184,15 @@ class DataService:
             clocks.append({"key": key, "city": EXCHANGES[key].name, "time": f"{t:%H:%M}",
                            "weekday": "一二三四五六日"[t.weekday()],
                            "status": market_status(key, now)})
-        return {"updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "demo": self.demo, "clocks": clocks, "groups": groups}
+        tpe = local_time("TW", now)
+        return {"updated": f"{tpe:%Y-%m-%d %H:%M:%S}",          # 台北時間（雲端機器是 UTC）
+                "updated_utc": now.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "demo": self.demo, "clocks": clocks, "groups": groups,
+                # 讓網頁自己用當下時間判斷開收盤（雲端資料可能是十幾分鐘前產生的）
+                "clock_keys": CLOCKS,
+                "exchanges": {k: {"name": e.name, "tz": e.tz, "always": e.always,
+                                  "sessions": [[f"{a:%H:%M}", f"{b:%H:%M}"] for a, b in e.sessions]}
+                              for k, e in EXCHANGES.items()}}
 
     # ------------------------------------------------------------ 單一商品走勢
     def history(self, symbol: str, period: str = "1y") -> dict:

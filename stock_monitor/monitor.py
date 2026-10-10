@@ -291,4 +291,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    from common.updater import check_and_update
+    check_and_update()
     main()
