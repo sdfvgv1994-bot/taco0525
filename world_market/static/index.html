@@ -212,7 +212,7 @@ const histCache = new Map();
 const NS = "http://www.w3.org/2000/svg";
 const INDEX_GROUPS = ["台灣", "美洲", "亞太", "歐洲"];
 const PERIODS = [["1mo", "1 個月"], ["3mo", "3 個月"], ["6mo", "6 個月"], ["1y", "1 年"], ["5y", "5 年"]];
-let data = null, filter = "全部", current = null;
+let data = null, filter = "全部", current = null, lastError = null;
 
 // ---------- 偏好設定（存在瀏覽器，失敗也沒關係） ----------
 function pref(key, val) {
@@ -600,24 +600,31 @@ async function load(force) {
     const next = await r.json();
     if (STATIC && data && next.updated_utc !== data.updated_utc) histCache.clear();
     data = next;
+    lastError = null;
     showUpdated();
     $("demo").hidden = !data.demo;
     if (!data.groups.some((g) => g.name === filter)) filter = "全部";
     renderClocks(); renderFilters(); renderRank(); renderGroups();
   } catch (e) {
-    $("updated").textContent = "⚠ 更新失敗：" + e.message;
+    lastError = e.message;
+    showUpdated();
   } finally {
     $("refreshBtn").disabled = false;
   }
 }
 $("refreshBtn").onclick = () => load(true);
 function showUpdated() {
-  if (!data) return;
-  if (!STATIC || !data.updated_utc) { $("updated").textContent = "更新時間 " + data.updated; return; }
+  // 更新失敗的提示要一直留著，直到下次成功為止（不能被 30 秒的時間刷新蓋掉）
+  const err = lastError ? `⚠ 更新失敗：${lastError}` : "";
+  if (!data) { $("updated").textContent = err || "載入中…"; return; }
+  if (!STATIC || !data.updated_utc) {
+    $("updated").textContent = (err ? err + "　（畫面是 " : "更新時間 ") + data.updated + (err ? " 的資料）" : "");
+    return;
+  }
   const mins = Math.max(0, Math.round((Date.now() - Date.parse(data.updated_utc)) / 60000));
   const ago = mins < 1 ? "剛剛" : mins < 60 ? `${mins} 分鐘前` : `${Math.floor(mins / 60)} 小時 ${mins % 60} 分鐘前`;
-  $("updated").textContent = `資料時間 ${data.updated.slice(5, 16)}（台北，${ago}）` +
-    (mins > 90 ? "　⚠ 雲端更新可能暫停了" : "");
+  $("updated").textContent = (err ? err + "　" : "") + `資料時間 ${data.updated.slice(5, 16)}（台北，${ago}）` +
+    (!err && mins > 90 ? "　⚠ 雲端更新可能暫停了" : "");
 }
 if (STATIC) {
   $("note").textContent = "雲端版：GitHub 每 15 分鐘抓一次最新資料（排程偶爾會晚幾分鐘），這個頁面每分鐘自動檢查。" +

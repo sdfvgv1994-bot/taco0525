@@ -170,3 +170,124 @@ def test_restart_runs_new_version_once(repos, monkeypatch):
     assert seen["args"] == [sys.executable, "prog.py", "--demo"]
     assert updater.os.environ.get("TACO_UPDATED") == "1"   # 重啟後不會再更新一次
     assert run()[0] == "disabled"
+
+
+# ---------- 第三輪審查補強 ----------
+def test_ahead_of_github_is_left_alone(repos):
+    """本機有沒推上去的提交、GitHub 上沒有新東西：不能被「更新」成舊版。"""
+    _, _, user, _ = repos
+    (user / "app.py").write_text("my commit\n")
+    git(user, "commit", "-q", "-am", "mine")
+    (user / "app.py").write_text("my commit + tweak\n")
+    assert run()[0] == "latest"
+    assert (user / "app.py").read_text() == "my commit + tweak\n"
+
+
+def test_chinese_local_edit_on_cp950_locale(repos, monkeypatch):
+    """繁中 Windows 預設 cp950：讀到 UTF-8 的中文 diff 也不能當掉。"""
+    _, _, user, publish = repos
+    (user / "app.py").write_text("# 加入聯電 2303、國泰永續高股息\n")
+    publish("v2\n")
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950", raising=False)
+    result, msg = run()
+    assert result == "updated" and (user / "app.py").read_text() == "v2\n"
+    patch = next((user / ".cache" / "backup").glob("*.patch")).read_bytes().decode("utf-8")
+    assert "聯電" in patch
+
+
+def test_staged_and_unstaged_changes_are_backed_up(repos):
+    _, _, user, publish = repos
+    (user / "app.py").write_text("staged edit\n")
+    git(user, "add", "app.py")
+    (user / "requirements.txt").write_text("pandas\nmine\n")      # 未暫存
+    publish("v2\n")
+    result, _ = run()
+    assert result == "updated"
+    refs = git(user, "for-each-ref", "refs/backup/", "--format=%(objectname)").split()
+    assert refs
+    stash = refs[0]
+    assert git(user, "show", f"{stash}:app.py") == "staged edit"
+    assert "mine" in git(user, "show", f"{stash}:requirements.txt")
+
+
+def test_unexpected_error_never_blocks_startup(repos, monkeypatch):
+    def boom(out):
+        raise ValueError("bug")
+    monkeypatch.setattr(updater, "_update", boom)
+    result, msg = run()
+    assert result == "skipped" and "ValueError" in msg
+
+
+def test_pip_failure_rolls_back_and_retries_next_time(repos, monkeypatch):
+    _, _, user, publish = repos
+    before = git(user, "rev-parse", "HEAD")
+    publish("v2\n", req="pandas\nnewpkg\n")
+    real_run = subprocess.run
+    pip_ok = {"value": False}
+
+    def fake_run(cmd, *a, **kw):
+        if "pip" in cmd:
+            return subprocess.CompletedProcess(cmd, 0 if pip_ok["value"] else 1, "", "")
+        return real_run(cmd, *a, **kw)
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    result, msg = run()
+    assert result == "skipped" and "退回" in msg
+    assert git(user, "rev-parse", "HEAD") == before and (user / "app.py").read_text() == "v1\n"
+    pip_ok["value"] = True
+    assert run()[0] == "updated" and (user / "app.py").read_text() == "v2\n"
+
+
+def test_interrupted_install_is_completed_on_next_start(repos, monkeypatch):
+    _, _, user, _ = repos
+    run()                                                  # 第一次執行：記下目前套件清單
+    (user / ".cache" / "requirements.installed").write_text("old-hash")
+    calls = []
+    real_run = subprocess.run
+    monkeypatch.setattr(updater.subprocess, "run",
+                        lambda cmd, *a, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", "")
+                        if "pip" in cmd else real_run(cmd, *a, **kw))
+    assert run()[0] == "latest" and calls
+    assert (user / ".cache" / "requirements.installed").read_text() == updater._req_hash()
+
+
+def test_folder_inside_another_git_repo_is_not_touched(tmp_path, monkeypatch, repos):
+    """用 ZIP 解壓縮在別的 git 專案裡面：不能去更新外面那個專案。"""
+    _, _, user, publish = repos
+    inner = user / "unzipped_copy"
+    inner.mkdir()
+    (inner / "x.py").write_text("x\n")
+    (user / "app.py").write_text("parent's unsaved notes\n")
+    publish("v2\n")
+    monkeypatch.setattr(updater, "ROOT", inner)
+    assert run()[0] == "skipped"
+    assert (user / "app.py").read_text() == "parent's unsaved notes\n"
+
+
+def _update_in_child(root, barrier, out):
+    import sys as _sys
+    _sys.path.insert(0, str(root))
+    from pathlib import Path as P
+    from common import updater as up
+    up.ROOT = P(out["user"])
+    barrier.wait()
+    out["results"].append(up.check_and_update(argv=["x"], restart=False, out=lambda *_: None))
+
+
+def test_two_programs_starting_together_keep_the_backup(repos):
+    import multiprocessing as mp
+    from pathlib import Path
+    _, _, user, publish = repos
+    (user / "app.py").write_text("precious local edit\n")
+    publish("v2\n")
+    ctx = mp.get_context("spawn")
+    with ctx.Manager() as m:
+        shared = m.dict(user=str(user), results=m.list())
+        barrier = ctx.Barrier(2)
+        root = Path(__file__).resolve().parents[1]
+        ps = [ctx.Process(target=_update_in_child, args=(root, barrier, shared)) for _ in range(2)]
+        [p.start() for p in ps]
+        [p.join(timeout=60) for p in ps]
+        results = sorted(shared["results"])
+    assert results == ["latest", "updated"]                 # 只有一個真的做更新
+    patches = list((user / ".cache" / "backup").glob("*.patch"))
+    assert len(patches) == 1 and "precious local edit" in patches[0].read_text(encoding="utf-8")

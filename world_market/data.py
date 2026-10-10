@@ -13,7 +13,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common.market import PERIOD_DAYS, demo_history, fetch_history, parse_symbol  # noqa: E402
+from common.market import PERIOD_DAYS, demo_history, fetch_history, fetch_twse, parse_symbol  # noqa: E402
 from world_market.markets import (ALL_ITEMS, CLOCKS, EXCHANGES, GROUPS, Item,  # noqa: E402
                                   local_time, market_status)
 
@@ -212,8 +212,14 @@ class DataService:
                     "5y": 1250, "10y": 2500}[period]
             df, source = self._demo_df(it, days), "示範資料"
         elif it.source == "twse":
-            code, df = fetch_history(parse_symbol(symbol), period=period)
-            source = "證交所" if code in ("^TWII",) or code.endswith((".TW", ".TWO")) else "Yahoo"
+            sym = parse_symbol(symbol)
+            try:
+                _, df = fetch_twse(sym, period=period)
+                source = "證交所"
+            except Exception as e:  # noqa: BLE001 - 證交所抓不到就改用 Yahoo，來源照實標示
+                print(f"⚠ 證交所資料抓取失敗（{e}），{it.name} 改用 Yahoo Finance", file=sys.stderr)
+                _, df = fetch_history(sym, period=period, source="yahoo")
+                source = "Yahoo Finance"
         else:
             got = self.yahoo_download([yahoo_code(it)], period)
             df = got.get(yahoo_code(it))

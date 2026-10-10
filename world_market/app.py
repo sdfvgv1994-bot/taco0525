@@ -18,6 +18,10 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+if __name__ == "__main__":  # 先自動更新，再匯入 pandas 等套件（Windows 更新套件時檔案才不會被占用）
+    from common.updater import check_and_update
+    check_and_update()
+
 from world_market.data import OVERVIEW_TTL, DataService  # noqa: E402
 
 STATIC = Path(__file__).parent / "static"
@@ -127,6 +131,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    from common.updater import check_and_update
-    check_and_update()
     main()

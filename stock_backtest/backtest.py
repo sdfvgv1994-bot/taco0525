@@ -20,6 +20,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+if __name__ == "__main__":  # 先自動更新，再匯入 pandas 等套件（Windows 更新套件時檔案才不會被占用）
+    from common.updater import check_and_update
+    check_and_update()
+
 from common import strategies as strat  # noqa: E402
 from common.market import fetch_history, parse_symbol  # noqa: E402
 from stock_backtest.engine import EXIT_END, EXIT_FIXED, EXIT_TRAIL, compare, run_backtest  # noqa: E402
@@ -290,6 +294,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    from common.updater import check_and_update
-    check_and_update()
     sys.exit(main())

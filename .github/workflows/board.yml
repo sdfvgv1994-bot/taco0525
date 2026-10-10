@@ -44,6 +44,13 @@ jobs:
           key: twse-${{ github.run_id }}
           restore-keys: twse-
 
+      # 上一次成功抓到的走勢：這次抓不到（例如 Yahoo 限流）時沿用，不會讓網頁少了走勢圖
+      - uses: actions/cache@v4
+        with:
+          path: .cache/board_history
+          key: board-history-${{ github.run_id }}
+          restore-keys: board-history-
+
       - name: 產生看板網頁
         run: python world_market/build_static.py --out _site
 

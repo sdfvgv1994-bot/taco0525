@@ -23,6 +23,8 @@ from world_market.data import DataService, yahoo_code  # noqa: E402
 from world_market.markets import ALL_ITEMS  # noqa: E402
 
 STATIC = Path(__file__).parent / "static"
+ROOT = Path(__file__).resolve().parent.parent
+HISTORY_CACHE = ROOT / ".cache" / "board_history"   # 上一次成功抓到的歷史資料（GitHub Actions 快取會保存）
 HISTORY_PERIOD = "5y"
 MIN_OK_RATIO = 0.5   # 抓得到的項目少於一半就當作失敗，保留上一次部署的網頁
 
@@ -43,7 +45,8 @@ def _history_rows(df) -> dict:
             "close": [round(float(v), 6) for v in df["Close"]]}
 
 
-def build(out: Path, service: DataService | None = None, log=print) -> dict:
+def build(out: Path, service: DataService | None = None, log=print,
+          history_cache: Path | None = HISTORY_CACHE) -> dict:
     svc = service or DataService()
     out = Path(out)
     if out.exists():
@@ -82,15 +85,27 @@ def build(out: Path, service: DataService | None = None, log=print) -> dict:
             histories[sym] = {"dates": h["dates"], "close": h["close"], "source": h["source"]}
         except Exception as e:  # noqa: BLE001 - 一檔失敗不影響其他檔
             errors[sym] = str(e)
+    reused = []
     for sym, it in ALL_ITEMS.items():
+        name = f"{safe_name(sym)}.json"
         if sym in histories:
-            _dump(out / "data" / "history" / f"{safe_name(sym)}.json",
-                  {"symbol": sym, "name": it.name, "decimals": it.decimals, **histories[sym]})
+            doc = {"symbol": sym, "name": it.name, "decimals": it.decimals, **histories[sym]}
+            if history_cache and not svc.demo:
+                _dump(history_cache / name, doc)          # 存一份，下次抓不到時用
+        elif history_cache and (history_cache / name).exists():
+            doc = json.loads((history_cache / name).read_text(encoding="utf-8"))
+            reused.append(sym)                            # 這次抓不到，沿用上一次成功的資料
         else:
             errors.setdefault(sym, "查不到歷史資料")
-    log(f"歷史資料：{len(histories)}/{len(ALL_ITEMS)} 個項目")
+            continue
+        _dump(out / "data" / "history" / name, doc)
+    written = len(histories) + len(reused)
+    log(f"歷史資料：{written}/{len(ALL_ITEMS)} 個項目（其中 {len(reused)} 個沿用上一次的資料）")
     for sym, e in errors.items():
-        log(f"  ⚠ {ALL_ITEMS[sym].name}（{sym}）：{e}")
+        if sym not in reused:
+            log(f"  ⚠ {ALL_ITEMS[sym].name}（{sym}）：{e}")
+    if written < len(ALL_ITEMS) * MIN_OK_RATIO:
+        raise SystemExit(f"歷史資料太少（{written}/{len(ALL_ITEMS)}），這次不更新網頁")
 
     _dump(out / "data" / "overview.json", {**ov, "static": True, "history_period": HISTORY_PERIOD})
     html = (STATIC / "index.html").read_text(encoding="utf-8")
@@ -100,7 +115,8 @@ def build(out: Path, service: DataService | None = None, log=print) -> dict:
     html = html.replace(marker, "<script>window.WM_STATIC = true;</script>\n" + marker, 1)
     (out / "index.html").write_text(html, encoding="utf-8")
     (out / ".nojekyll").write_text("")
-    return {"items": len(items), "ok": len(ok), "histories": len(histories), "errors": errors}
+    return {"items": len(items), "ok": len(ok), "histories": written, "reused": reused,
+            "errors": {k: v for k, v in errors.items() if k not in reused}}
 
 
 def main(argv=None):

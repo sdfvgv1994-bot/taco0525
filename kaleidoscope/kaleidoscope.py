@@ -21,6 +21,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+if __name__ == "__main__":  # 先自動更新，再匯入 pygame
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from common.updater import check_and_update
+    check_and_update()
+
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame  # noqa: E402
 
@@ -182,7 +187,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from common.updater import check_and_update
-    check_and_update()
     main()

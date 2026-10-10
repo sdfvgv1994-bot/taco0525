@@ -218,7 +218,7 @@ def test_overview_realtime_failure_during_session_prefers_yahoo(monkeypatch):
 def test_build_static_demo(tmp_path):
     from world_market import build_static as bs
     out = tmp_path / "site"
-    result = bs.build(out, DataService(demo=True), log=lambda *_: None)
+    result = bs.build(out, DataService(demo=True), log=lambda *_: None, history_cache=tmp_path / "hc")
     assert result["ok"] == result["items"] == len(ALL_ITEMS)
     ov = json.loads((out / "data" / "overview.json").read_text(encoding="utf-8"))
     assert ov["static"] and ov["exchanges"]["TW"]["tz"] == "Asia/Taipei"
@@ -241,10 +241,10 @@ def test_safe_name_matches_js_rule():
 def test_build_static_real_path_uses_one_yahoo_batch(tmp_path, monkeypatch):
     from world_market import build_static as bs
     from world_market import data as wm_data
-    monkeypatch.setattr(wm_data, "fetch_history", lambda sym, period: ("2330.TW", fake_df(300)))
+    monkeypatch.setattr(wm_data, "fetch_twse", lambda sym, period: ("2330.TW", fake_df(300)))
     yh = FakeYahoo()
     svc = DataService(yahoo_download=yh, twse_client=FakeTwse())
-    result = bs.build(tmp_path / "site", svc, log=lambda *_: None)
+    result = bs.build(tmp_path / "site", svc, log=lambda *_: None, history_cache=tmp_path / "hc")
     five_year = [c for c in yh.calls if c[1] == "5y"]
     assert len(five_year) == 1                                  # Yahoo 的歷史一次批次下載
     assert "2330.TW" not in five_year[0][0]                     # 台股走證交所
@@ -260,4 +260,47 @@ def test_build_static_refuses_when_most_items_fail(tmp_path):
         raise ConnectionError("down")
     svc = DataService(yahoo_download=boom, twse_client=FakeTwse(fail=True))
     with pytest.raises(SystemExit, match="太少"):
-        bs.build(tmp_path / "site", svc, log=lambda *_: None)
+        bs.build(tmp_path / "site", svc, log=lambda *_: None, history_cache=tmp_path / "hc")
+
+
+class FlakyYahoo(FakeYahoo):
+    """3 個月的總覽正常，5 年的歷史下載失敗（GitHub 機器常被 Yahoo 限流）。"""
+    def __call__(self, symbols, period):
+        if period == "5y":
+            raise ConnectionError("rate limited")
+        return super().__call__(symbols, period)
+
+
+def test_build_static_reuses_last_good_history(tmp_path, monkeypatch):
+    from world_market import build_static as bs
+    from world_market import data as wm_data
+    monkeypatch.setattr(wm_data, "fetch_twse", lambda sym, period: ("2330.TW", fake_df(300)))
+    cache = tmp_path / "hc"
+    bs.build(tmp_path / "s1", DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse()),
+             log=lambda *_: None, history_cache=cache)
+    assert (cache / "_GSPC.json").exists()
+    result = bs.build(tmp_path / "s2", DataService(yahoo_download=FlakyYahoo(), twse_client=FakeTwse()),
+                      log=lambda *_: None, history_cache=cache)
+    assert "^GSPC" in result["reused"] and (tmp_path / "s2" / "data" / "history" / "_GSPC.json").exists()
+    assert "^GSPC" not in result["errors"]
+
+
+def test_build_static_refuses_when_most_histories_missing(tmp_path, monkeypatch):
+    from world_market import build_static as bs
+    from world_market import data as wm_data
+    monkeypatch.setattr(wm_data, "fetch_twse", lambda sym, period: ("2330.TW", fake_df(300)))
+    svc = DataService(yahoo_download=FlakyYahoo(), twse_client=FakeTwse())
+    with pytest.raises(SystemExit, match="歷史資料太少"):
+        bs.build(tmp_path / "site", svc, log=lambda *_: None, history_cache=tmp_path / "empty")
+
+
+def test_history_source_says_yahoo_when_twse_fails(monkeypatch, capsys):
+    from world_market import data as wm_data
+
+    def blocked(sym, period):
+        raise RuntimeError("證交所回應 HTTP 307")
+    monkeypatch.setattr(wm_data, "fetch_twse", blocked)
+    monkeypatch.setattr(wm_data, "fetch_history", lambda sym, period, source: ("2330.TW", fake_df(50)))
+    h = DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse()).history("2330", "3mo")
+    assert h["source"] == "Yahoo Finance"
+    assert "改用 Yahoo" in capsys.readouterr().err
