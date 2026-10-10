@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common import strategies as strat  # noqa: E402
+from common.market import parse_symbol, uses_twse  # noqa: E402
 from stock_monitor.account import TradeError  # noqa: E402
 from stock_monitor.engine import Monitor  # noqa: E402
 from stock_monitor.storage import Store  # noqa: E402
@@ -49,7 +50,10 @@ def show_quotes(m: Monitor, res):
         pos = m.account.positions.get(name)
         held = f"{pos['shares']} 股" if pos else ""
         label = f"{name} {m.names.get(name, '')}".strip()
-        print(f"{pad(label, 14)}{s.price:>10.2f}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"
+        # 台股沒拿到即時報價時，價格是最近一天的收盤價，加上 * 標記
+        mark = "*" if res.realtime_error is not None and name not in res.live and \
+            uses_twse(parse_symbol(name)) else " "
+        print(f"{pad(label, 14)}{s.price:>9.2f}{mark}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"
               f"{s.long_ma:>10.2f}{s.rsi:>6.0f}   {trend}   {held}")
         today = [f"{'買' if v == 1 else '賣'}:{strat.get(k).name}" for k, v in s.signals.items() if v]
         if today:

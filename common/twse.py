@@ -10,7 +10,8 @@
 證交所會封鎖太頻繁的連線（大約 5 秒 3 次；實測被封鎖後 20 分鐘以上才解除），所以：
 - 每次連線至少間隔 MIN_INTERVAL 秒，而且是「跨程式」共用：同時開回測、看盤、看板，
   或連續執行好幾次，都會在快取資料夾的時間紀錄排隊，不會疊加成連發
-- 一偵測到被封鎖（轉址、403、502 安全性頁面、回 HTML），就記下來，BLOCK_COOLDOWN 秒內
+- 一偵測到被封鎖（轉址、403、502 安全性頁面、回 HTML），就記下來，一段時間內（證交所主站
+  BLOCK_COOLDOWN 秒；即時報價的 502 常常十幾秒就恢復，只停 MIS_COOLDOWN 秒）
   不再連那個網站，直接報錯（自動模式會改用 Yahoo），避免一直重試讓封鎖時間拉長
 - 歷史資料存在本機快取，過去的月份不會再抓；當月資料 CACHE_TTL 秒後才更新
 """
@@ -34,6 +35,7 @@ import pandas as pd
 
 MIN_INTERVAL = 3.0
 BLOCK_COOLDOWN = 5 * 60
+MIS_COOLDOWN = 60      # 實測即時報價回 502 後，十幾秒到幾十分鐘都有；看盤每分鐘更新，停一分鐘剛好
 BLOCKED_STATUS = (301, 302, 303, 307, 308, 403, 429, 502, 503)
 CACHE_TTL = 15 * 60
 TIMEOUT = 15
@@ -46,6 +48,7 @@ URL_INDEX = "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST"
 URL_TPEX = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock"
 URL_TPEX_OLD = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
 URL_MIS = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+URL_MIS_HOME = "https://mis.twse.com.tw/stock/index.jsp"  # 先開這頁拿 cookie，即時報價才會回資料
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 # 即時報價裡的指數代號
@@ -125,6 +128,23 @@ def parse_stock_day(js: dict) -> pd.DataFrame:
     if str(js.get("stat", "")).upper() != "OK" or not js.get("data"):
         return _rows_to_df(["日期", "開盤價", "最高價", "最低價", "收盤價"], [])
     return _rows_to_df(js["fields"], js["data"])
+
+
+def name_from_stock_day(js: dict) -> str | None:
+    """標題像「113年10月 2330 台積電           各日成交資訊」，取出股名。"""
+    m = re.search(r"\d{4,6}[A-Z]?\s+(\S+)\s+各日成交資訊", str(js.get("title") or ""))
+    return m.group(1) if m else None
+
+
+def name_from_tpex(js: dict) -> str | None:
+    """櫃買中心新版頂層有 name；也可以從 subtitle「6488 環球晶 113年10月」取。"""
+    if js.get("name"):
+        return str(js["name"]).strip() or None
+    for t in js.get("tables") or []:
+        m = re.match(r"\s*\S+\s+(\S+)\s", str(t.get("subtitle") or ""))
+        if m:
+            return m.group(1)
+    return None
 
 
 def parse_index(js: dict) -> pd.DataFrame:
@@ -268,6 +288,10 @@ class HostGate:
         self._blocked_at = 0.0    # 程式內的封鎖紀錄（沒有 state_dir 時用）
         self._file_ok = state_dir is not None
 
+    @property
+    def cooldown(self) -> float:
+        return MIS_COOLDOWN if self.host == "mis.twse.com.tw" else BLOCK_COOLDOWN
+
     def _paths(self):
         d = self.state_dir
         return d / f".gate_{self.host}.lock", d / f".gate_{self.host}.next", d / f".blocked_{self.host}"
@@ -280,11 +304,12 @@ class HostGate:
 
     # ---- 封鎖紀錄 ----
     def blocked_remaining(self) -> float:
-        """還要等幾秒才解除封鎖紀錄；0 = 沒有被封鎖。最多 BLOCK_COOLDOWN（時鐘被調過也不會卡更久）。"""
+        """還要等幾秒才解除封鎖紀錄；0 = 沒有被封鎖。最多 cooldown 秒（時鐘被調過也不會卡更久）。"""
         at = self._blocked_at
         if self._file_ok:
             at = max(at, _read_float(self._paths()[2]))
-        return max(0.0, min(BLOCK_COOLDOWN, at + BLOCK_COOLDOWN - time.time()))
+        cd = self.cooldown
+        return max(0.0, min(cd, at + cd - time.time()))
 
     def mark_blocked(self) -> None:
         now = time.time()
@@ -368,6 +393,8 @@ class TwseClient:
         self.progress = progress   # 例如 print，用來顯示「下載中 3/24」
         self._gates: dict = {}
         self._gates_lock = threading.Lock()
+        self.names: dict = {}       # 代號 → 股名（從歷史資料標題或即時報價取得）
+        self._mis_warm = False
 
     def gate(self, url: str) -> HostGate:
         host = urlparse(url).hostname or url
@@ -395,7 +422,7 @@ class TwseClient:
             # 實測被封鎖時：證交所轉址（307），即時報價回 502 安全性頁面
             gate.mark_blocked()
             raise TwseError(f"{gate.host} 回應 HTTP {r.status_code}"
-                            f"（連線太頻繁被暫時封鎖，{BLOCK_COOLDOWN // 60} 分鐘內先不連線）")
+                            f"（連線太頻繁被暫時封鎖，{_minutes(gate.cooldown)} 分鐘內先不連線）")
         if r.status_code != 200:
             raise TwseError(f"{url} 回應 HTTP {r.status_code}")
         try:
@@ -404,7 +431,7 @@ class TwseClient:
             # 被封鎖時也可能回 200 的 HTML 頁面
             gate.mark_blocked()
             raise TwseError(f"{gate.host} 回應不是 JSON（可能被暫時封鎖，"
-                            f"{BLOCK_COOLDOWN // 60} 分鐘內先不連線）") from None
+                            f"{_minutes(gate.cooldown)} 分鐘內先不連線）") from None
         gate.clear_blocked(since=sent_at)
         return js
 
@@ -428,6 +455,9 @@ class TwseClient:
         cur = (y, m) == ((today or date.today()).year, (today or date.today()).month)
         js = self._cached(f"tse_{code}_{y}{m:02d}", cur, lambda: self._get_json(
             URL_STOCK_DAY, {"date": f"{y}{m:02d}01", "stockNo": code, "response": "json"}))
+        name = name_from_stock_day(js)
+        if name:
+            self.names[code] = name
         return parse_stock_day(js)
 
     def tpex_month(self, code: str, y: int, m: int, today: date | None = None) -> pd.DataFrame:
@@ -441,7 +471,11 @@ class TwseClient:
                 return js
             return self._get_json(URL_TPEX_OLD, {"l": "zh-tw", "d": f"{y - 1911}/{m:02d}",
                                                  "stkno": code}, redirect_is_block=False)
-        return parse_tpex(self._cached(f"otc_{code}_{y}{m:02d}", cur, fetch))
+        js = self._cached(f"otc_{code}_{y}{m:02d}", cur, fetch)
+        name = name_from_tpex(js)
+        if name:
+            self.names[code] = name
+        return parse_tpex(js)
 
     def index_month(self, y: int, m: int, today: date | None = None) -> pd.DataFrame:
         cur = (y, m) == ((today or date.today()).year, (today or date.today()).month)
@@ -493,10 +527,35 @@ class TwseClient:
             else:
                 ex_ch += [f"tse_{it}.tw", f"otc_{it}.tw"]
                 lookup[it] = it
+        self._warm_mis()
         js = self._get_json(URL_MIS, {"ex_ch": "|".join(ex_ch), "json": "1", "delay": "0",
                                       "_": str(int(time.time() * 1000))})
+        rtcode = str(js.get("rtcode", "0000"))
+        if rtcode != "0000":
+            self._mis_warm = False  # cookie 可能過期，下次重新暖機
+            raise TwseError(f"即時報價回應錯誤 rtcode={rtcode} {js.get('rtmessage') or ''}".strip())
         quotes = parse_mis(js)
-        return {lookup[c]: q for c, q in quotes.items() if c in lookup}
+        got = {lookup[c]: q for c, q in quotes.items() if c in lookup}
+        for c, q in quotes.items():
+            if q.name and c in lookup and not c.startswith(("t00", "o00")):
+                self.names[c] = q.name
+        if items and not got:
+            self._mis_warm = False
+            raise TwseError(f"即時報價沒有回傳任何資料（{js.get('rtmessage') or '空白回應'}）")
+        return got
+
+    def _warm_mis(self) -> None:
+        """第一次查即時報價前先開看盤首頁拿 session cookie（twstock 等套件也這樣做）。"""
+        if self._mis_warm:
+            return
+        gate = self.gate(URL_MIS_HOME)
+        gate.wait_turn()
+        try:
+            r = self.session.get(URL_MIS_HOME, timeout=TIMEOUT)
+        except Exception:  # noqa: BLE001 - 暖機失敗不影響接著查報價
+            return
+        # 實測首頁可能回 502，但接著查報價仍會成功（並拿到 cookie），所以這裡不判定封鎖
+        self._mis_warm = r.status_code == 200
 
 
 _default_client: TwseClient | None = None
@@ -507,3 +566,49 @@ def client() -> TwseClient:
     if _default_client is None:
         _default_client = TwseClient(progress=print)
     return _default_client
+
+
+# ---------------------------------------------------------------- 診斷
+def diagnose(codes: list, cl: TwseClient | None = None, out=print) -> None:
+    """檢查即時報價與股名抓不抓得到，輸出可以直接貼給別人看。只會送出很少的請求。"""
+    cl = cl or client()
+    now = datetime.now(TAIPEI)
+    out(f"== 證交所連線診斷　台北時間 {now:%Y-%m-%d %H:%M}（週{'一二三四五六日'[now.weekday()]}）")
+    out("   交易時間：週一～五 09:00–13:30；假日或盤前盤後，即時報價可能只有昨收或沒有資料")
+    out(f"== 快取資料夾：{cl.cache_dir}")
+    for url in (URL_STOCK_DAY, URL_MIS, URL_TPEX):
+        g = cl.gate(url)
+        left = g.blocked_remaining()
+        out(f"   {g.host:<22}{'封鎖暫停中，還剩 %d 秒' % left if left else '正常'}")
+    out(f"== 即時報價（{', '.join(codes)}）")
+    ex_ch = "|".join(f"{m}_{c}.tw" for c in codes for m in ("tse", "otc"))
+    try:
+        cl._warm_mis()
+        out(f"   看盤首頁暖機：{'成功' if cl._mis_warm else '沒有拿到 cookie（不一定有影響）'}")
+        js = cl._get_json(URL_MIS, {"ex_ch": ex_ch, "json": "1", "delay": "0",
+                                    "_": str(int(time.time() * 1000))})
+        arr = [it for it in js.get("msgArray") or [] if it.get("c")]
+        out(f"   rtcode={js.get('rtcode')} rtmessage={js.get('rtmessage')} 回傳 {len(arr)} 筆")
+        for it in arr:
+            out(f"   {it.get('c')} {it.get('n')} 市場={it.get('ex')} 成交價 z={it.get('z')} "
+                f"昨收 y={it.get('y')} 最佳買價 b={(it.get('b') or '')[:20]} 時間 {it.get('d')} {it.get('t')}")
+        if not arr:
+            out("   ⚠ 沒有任何資料：可能是非交易時間、cookie 沒拿到，或代號錯誤")
+    except Exception as e:  # noqa: BLE001
+        out(f"   ⚠ 失敗：{e}")
+    out("== 從歷史資料取股名")
+    today = date.today()
+    for c in codes:
+        try:
+            df = cl.stock_month(c, today.year, today.month)
+            if df.empty and c not in cl.names:
+                df = cl.tpex_month(c, today.year, today.month)
+            out(f"   {c} → {cl.names.get(c) or '（查不到股名）'}，本月 {len(df)} 筆日 K")
+        except Exception as e:  # noqa: BLE001
+            out(f"   {c} → ⚠ 失敗：{e}")
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    diagnose(_sys.argv[1:] or ["2330", "6488"])
+    print("\n把上面的輸出整段貼給 Claude，就能判斷問題在哪裡。")

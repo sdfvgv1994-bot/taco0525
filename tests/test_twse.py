@@ -145,10 +145,13 @@ def stock_router(listed=True):
         if url == twse.URL_TPEX:
             y, m = p["date"].split("/")[:2]
             roc = f"{int(y) - 1911}/{m}"
-            return {"tables": [{"fields": TPEX_NEW["tables"][0]["fields"],
+            return {"code": "6488", "name": "環球晶", "stat": "ok",
+                    "tables": [{"fields": TPEX_NEW["tables"][0]["fields"],
                                 "data": [[f"{roc}/01", "1", "1", "40", "41", "39", "40.5", "0", "1"]]}]}
         if url == twse.URL_MIS:
             return MIS
+        if url == twse.URL_MIS_HOME:
+            return "<html>看盤首頁</html>"
         raise AssertionError(url)
     return route
 
@@ -649,3 +652,138 @@ def test_windows_lock_path(tmp_path, monkeypatch):
     assert released and 0 <= got - released[0] < 0.15   # 對方一放開就拿到，不會等一秒
     gate = twse.HostGate("h", tmp_path, 0)
     assert gate._reserve() > 0
+
+
+# ---------- 股名與即時報價暖機 ----------
+def test_names_from_history_titles():
+    assert twse.name_from_stock_day(STOCK_DAY_OK) == "台積電"
+    assert twse.name_from_stock_day(STOCK_DAY_EMPTY) is None
+    assert twse.name_from_tpex(TPEX_NEW) == "環球晶"
+    no_top = {k: v for k, v in TPEX_NEW.items() if k != "name"}
+    assert twse.name_from_tpex(no_top) == "環球晶"          # 從 subtitle 取
+    assert twse.name_from_tpex({}) is None
+
+
+def test_client_remembers_names_from_history_and_cache(tmp_path):
+    cl, _ = make_client(tmp_path, stock_router())
+    cl.stock_month("2330", 2024, 10)
+    assert cl.names["2330"] == "台積電"
+    fresh, sess = make_client(tmp_path, stock_router())    # 新程式：從快取也要讀得到股名
+    fresh.stock_month("2330", 2024, 10)
+    assert not sess.calls and fresh.names["2330"] == "台積電"
+    otc, _ = make_client(tmp_path / "o", stock_router(listed=False))
+    otc.tpex_month("6488", 2024, 10)
+    assert otc.names["6488"] == "環球晶"
+
+
+def test_realtime_warms_up_once_and_records_names(tmp_path):
+    cl, sess = make_client(tmp_path, stock_router())
+    cl.realtime(["2330", "^TWII"])
+    cl.realtime(["2330"])
+    urls = [u for u, _ in sess.calls]
+    assert urls == [twse.URL_MIS_HOME, twse.URL_MIS, twse.URL_MIS]
+    assert cl.names["2330"] == "台積電" and "t00" not in cl.names
+
+
+@pytest.mark.parametrize("payload,match", [
+    ({"rtcode": "0000", "msgArray": []}, "沒有回傳任何資料"),
+    ({"rtcode": "0000", "msgArray": [{"c": "", "n": ""}]}, "沒有回傳任何資料"),
+    ({"rtcode": "5001", "rtmessage": "Session expired", "msgArray": []}, "rtcode=5001"),
+])
+def test_realtime_empty_or_error_raises_and_rewarms(tmp_path, payload, match):
+    def route(url, p):
+        return "<html></html>" if url == twse.URL_MIS_HOME else payload
+    cl, sess = make_client(tmp_path, route)
+    with pytest.raises(twse.TwseError, match=match):
+        cl.realtime(["2330"])
+    with pytest.raises(twse.TwseError):
+        cl.realtime(["2330"])
+    assert [u for u, _ in sess.calls].count(twse.URL_MIS_HOME) == 2   # 失敗後下次重新暖機
+
+
+def test_warmup_failure_does_not_block_query(tmp_path):
+    """實測看盤首頁回 502 之後，查報價仍然成功：暖機失敗不能擋住查詢。"""
+    sess = StatusSession(502)            # 第一個請求（暖機）回 502，之後正常
+    cl = twse.TwseClient(cache_dir=tmp_path, session=sess, min_interval=0)
+    got = cl.realtime(["2330"])
+    assert got["2330"].name == "台積電"
+    assert cl.gate(twse.URL_MIS).blocked_remaining() == 0
+    assert [c[0] for c in sess.calls] == [twse.URL_MIS_HOME, twse.URL_MIS]
+
+
+def test_mis_502_cooldown_is_short(tmp_path):
+    def route(url, p):
+        return "<html></html>"
+    class S(FakeSession):
+        def get(self, url, params=None, timeout=None, **kw):
+            self.calls.append(url)
+            return FakeResp("<html></html>") if url == twse.URL_MIS_HOME else FakeResp({}, status=502)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=S(route), min_interval=0)
+    with pytest.raises(twse.TwseError, match="1 分鐘內先不連線"):
+        cl.realtime(["2330"])
+    left = cl.gate(twse.URL_MIS).blocked_remaining()
+    assert 0 < left <= twse.MIS_COOLDOWN
+    assert cl.gate(twse.URL_STOCK_DAY).cooldown == twse.BLOCK_COOLDOWN
+
+
+# ---------- 看盤系統：即時報價抓不到時 ----------
+def _monitor_with(tmp_path, realtime, names=None):
+    def fetcher(name, settings, now, q):
+        idx = pd.bdate_range(end="2024-10-02", periods=30)
+        df = pd.DataFrame({"Open": 985.0, "High": 985.0, "Low": 985.0, "Close": 985.0, "Volume": 0},
+                          index=idx)
+        return name, with_live_bar(df, q.get(name)), q[name].price if name in q else 985.0
+    m = Monitor(Store(tmp_path), fetcher=fetcher, realtime=realtime,
+                name_lookup=(names or {}).get)
+    return m
+
+
+def test_monitor_names_from_history_when_realtime_fails(tmp_path, capsys):
+    def boom(items):
+        raise twse.TwseError("即時報價沒有回傳任何資料（空白回應）")
+    m = _monitor_with(tmp_path, boom, {"2330": "台積電"})
+    m.add("2330")
+    m.add("加權")
+    m.add("AAPL")
+    res = m.refresh(datetime(2024, 10, 3, 10, 0))
+    assert m.names == {"2330": "台積電", "加權": "加權指數"}
+    assert res.realtime_error and not res.live
+    assert any("即時報價暫時抓不到" in n and "空白回應" in n for n in res.notes)
+    from stock_monitor import monitor as ui
+    ui.show_quotes(m, res)
+    out = capsys.readouterr().out
+    assert "2330 台積電" in out
+    line_2330 = next(l for l in out.splitlines() if l.startswith("2330"))
+    line_aapl = next(l for l in out.splitlines() if l.startswith("AAPL"))
+    assert "985.00*" in line_2330 and "*" not in line_aapl     # 只有台股標 *
+    assert "標 * 的台股價格是最近一天的收盤價" in out
+
+
+def test_monitor_live_quotes_no_marks(tmp_path, capsys):
+    quotes = twse.parse_mis(MIS)
+    m = _monitor_with(tmp_path, lambda items: {"2330": quotes["2330"]})
+    m.add("2330")
+    res = m.refresh(datetime(2024, 10, 3, 10, 0))
+    assert res.live == {"2330"} and res.realtime_error is None
+    from stock_monitor import monitor as ui
+    ui.show_quotes(m, res)
+    out = capsys.readouterr().out
+    assert "2330 台積電" in out and "*" not in out
+
+
+def test_diagnose_output(tmp_path):
+    cl, sess = make_client(tmp_path, stock_router())
+    lines = []
+    twse.diagnose(["2330"], cl, out=lines.append)
+    text = "\n".join(lines)
+    assert "看盤首頁暖機：成功" in text and "2330 台積電" in text and "2330 → 台積電" in text
+    assert len(sess.calls) <= 3                       # 只送很少的請求
+
+
+def test_diagnose_reports_failure(tmp_path):
+    def route(url, p):
+        return "<html></html>" if url == twse.URL_MIS_HOME else {"rtcode": "0000", "msgArray": []}
+    cl, _ = make_client(tmp_path, route)
+    lines = []
+    twse.diagnose(["2330"], cl, out=lines.append)
+    assert any("沒有任何資料" in l for l in lines)

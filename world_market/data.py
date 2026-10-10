@@ -110,7 +110,11 @@ class DataService:
     def _load_twse(self, items: list) -> dict:
         end = date.today()
         start = end - timedelta(days=62)
-        quotes = self.twse.realtime([it.symbol for it in items])
+        try:
+            quotes = self.twse.realtime([it.symbol for it in items])
+        except Exception as e:  # noqa: BLE001 - 即時報價失敗時，照樣用證交所的歷史收盤價
+            print(f"⚠ 證交所即時報價抓不到（{e}），台灣項目先用最近一天的收盤價", file=sys.stderr)
+            quotes = {}
         out = {}
         for it in items:
             q = quotes.get(it.symbol)
@@ -126,7 +130,7 @@ class DataService:
                 closes = df["Close"]
                 out[it.symbol] = {"df": df, "price": float(closes.iloc[-1]),
                                   "prev": float(closes.iloc[-2]) if len(closes) > 1 else None,
-                                  "source": "證交所"}
+                                  "source": "證交所（收盤價）"}
                 continue
             if df is not None and not df.empty and q.time is not None:
                 today = pd.Timestamp(q.time.date())
