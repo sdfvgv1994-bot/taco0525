@@ -56,16 +56,20 @@ class RefreshResult:
     trades: list = field(default_factory=list)      # 這次自動成交
     notes: list = field(default_factory=list)       # 其他訊息（例如自動買進失敗）
     live: set = field(default_factory=set)          # 價格來自證交所即時報價的代號
+    inactive: set = field(default_factory=set)      # 不在交易時間、這次不判斷訊號的代號
     realtime_tried: bool = False                    # 這次有沒有向證交所查即時報價
     realtime_error: str | None = None               # 即時報價抓不到的原因
 
 
 class Monitor:
-    def __init__(self, store, fetcher=default_fetcher, realtime=None, name_lookup=None):
+    def __init__(self, store, fetcher=default_fetcher, realtime=None, name_lookup=None,
+                 is_active=None):
         # realtime(items) → {項目: Quote}；預設用證交所即時報價，測試時可換成假的
         self._realtime = realtime
         # name_lookup(代號) → 股名；預設查證交所歷史資料標題裡的股名
         self._name_lookup = name_lookup
+        # is_active(代號, 現在時間) → 這檔現在要不要判斷訊號、自動交易（雲端版只在交易時間內）
+        self._is_active = is_active
         self.realtime_error: str | None = None
         self.realtime_tried = False
         self.store = store
@@ -149,7 +153,8 @@ class Monitor:
         s = self.settings
         self.realtime_error = None
         self.realtime_tried = False
-        if s.get("demo") or s.get("source", "auto") == "yahoo":
+        # realtime 沒設定時：資料來源是 yahoo 就不查；雲端版會設 realtime=True（歷史用 Yahoo、即時試證交所）
+        if s.get("demo") or not s.get("realtime", s.get("source", "auto") != "yahoo"):
             return {}
         tw = [n for n in self.watchlist if uses_twse(parse_symbol(n))]
         if not tw:
@@ -207,6 +212,9 @@ class Monitor:
                     found = None
                 if found:
                     self.names[name] = found
+            if self._is_active is not None and not self._is_active(name, now):
+                res.inactive.add(name)
+                continue
             pos = self.account.positions.get(name)
             for alert in evaluate(snap, limits, pos, s["stop_loss_pct"]):
                 if not self._fresh(alert, now):
@@ -218,12 +226,14 @@ class Monitor:
         if res.realtime_tried:
             missing = [n for n in res.snapshots
                        if uses_twse(parse_symbol(n)) and n not in res.live]
+            fallback = ("來自 Yahoo（約延遲 15 分鐘）" if s.get("source") == "yahoo"
+                        else "是最近一天的收盤價")
             if self.realtime_error:
                 res.notes.append(f"證交所即時報價暫時抓不到（{self.realtime_error}），"
-                                 f"標 * 的台股價格是最近一天的收盤價")
+                                 f"標 * 的台股價格{fallback}")
             elif missing:
                 res.notes.append(f"證交所即時報價沒有回傳 {'、'.join(missing)}，"
-                                 f"標 * 的是最近一天的收盤價")
+                                 f"標 * 的{fallback}")
         self.save()
         return res
 

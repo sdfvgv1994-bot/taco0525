@@ -1,5 +1,7 @@
-# 雲端版全球股市看板：GitHub 的雲端機器每 15 分鐘抓一次資料，產生網頁放到 GitHub Pages。
-# 網址：https://sdfvgv1994-bot.github.io/taco0525/
+# 雲端版全球股市看板＋雲端看盤：GitHub 的雲端機器每 15 分鐘抓一次資料，產生網頁放到 GitHub Pages。
+# 全球看板：https://sdfvgv1994-bot.github.io/taco0525/
+# 雲端看盤：https://sdfvgv1994-bot.github.io/taco0525/monitor/
+#   設定在 cloud_monitor/config.toml；帳戶等資料存在 monitor-data 分支（每次執行後存回去）
 name: 更新雲端看板
 
 on:
@@ -11,10 +13,12 @@ on:
     paths:
       - "world_market/**"
       - "common/**"
+      - "cloud_monitor/**"
+      - "stock_monitor/**"
       - ".github/workflows/board.yml"
 
 permissions:
-  contents: read
+  contents: write     # 雲端看盤要把帳戶資料存回 monitor-data 分支
   pages: write
   id-token: write
 
@@ -53,6 +57,34 @@ jobs:
 
       - name: 產生看板網頁
         run: python world_market/build_static.py --out _site
+
+      # ---------------- 雲端看盤（出錯也不影響全球看板發佈） ----------------
+      - name: 取出雲端看盤的資料（monitor-data 分支）
+        id: state
+        continue-on-error: true
+        run: |
+          if git fetch --depth=1 origin monitor-data:monitor-data; then
+            git worktree add _state monitor-data
+          else
+            git worktree add --orphan -b monitor-data _state
+          fi
+
+      - name: 雲端看盤
+        id: monitor
+        if: steps.state.outcome == 'success'
+        continue-on-error: true
+        run: python cloud_monitor/run.py --state _state --out _site/monitor
+
+      - name: 存回雲端看盤的資料
+        if: steps.monitor.outcome == 'success'
+        continue-on-error: true
+        working-directory: _state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -q -m "雲端看盤 $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')"
+          git push -q origin monitor-data
 
       - uses: actions/upload-pages-artifact@v3
         with:

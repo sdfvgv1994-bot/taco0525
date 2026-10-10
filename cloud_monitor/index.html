@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="我的看盤">
+<title>我的雲端看盤</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ef;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6; --rise: #d03b3b; --fall: #006300; --flat: #898781;
+  --open: #0ca30c; --warn-bg: #fff4d6; --warn-ink: #6b4b00;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5; --rise: #e66767; --fall: #0ca30c;
+    --warn-bg: #3a2f12; --warn-ink: #f5d68a; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --accent: #3987e5; --rise: #e66767; --fall: #0ca30c;
+  --warn-bg: #3a2f12; --warn-ink: #f5d68a; --shadow: none;
+}
+:root[data-colors="intl"] { --rise-x: var(--fall); --fall-x: var(--rise); }
+:root:not([data-colors="intl"]) { --rise-x: var(--rise); --fall-x: var(--fall); }
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+}
+a { color: var(--accent); }
+button { font: inherit; color: inherit; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+.updated { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; }
+.btn {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+  padding: 6px 10px; cursor: pointer; white-space: nowrap; text-decoration: none; color: var(--ink);
+  display: inline-block;
+}
+.btn:hover { background: var(--surface-2); }
+.banner { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.banner ul { margin: 4px 0 0; padding-left: 20px; }
+.notes { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; padding-left: 18px; }
+section.panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 16px; box-shadow: var(--shadow);
+}
+h2 { font-size: 15px; margin: 0 0 10px; font-weight: 650; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tile { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
+.tile .k { color: var(--muted); font-size: 12px; }
+.tile .v { font-size: 22px; font-weight: 650; }
+.chart { position: relative; margin-top: 12px; }
+.chart svg { display: block; width: 100%; height: 160px; }
+.tick { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  white-space: nowrap; display: none;
+}
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+th:first-child, td:first-child { text-align: left; }
+.scroll { overflow-x: auto; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.card { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.card .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.card .name { font-weight: 650; }
+.card .price { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.card .meta { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: 12px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border); }
+.chip.buy { color: var(--rise-x); border-color: currentColor; }
+.chip.sell { color: var(--fall-x); border-color: currentColor; }
+.pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--axis); }
+.pill.open { color: var(--ink-2); }
+.pill.open .dot { background: var(--open); }
+.rise { color: var(--rise-x); } .fall { color: var(--fall-x); } .flat { color: var(--flat); }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 6px 0; border-bottom: 1px solid var(--grid); }
+.list .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; margin-right: 6px; }
+.empty { color: var(--muted); padding: 8px 0; }
+dl.settings { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 10px; }
+dl.settings dt { color: var(--muted); }
+dl.settings dd { margin: 0; }
+.foot { color: var(--muted); font-size: 12px; }
+@media (max-width: 560px) { .tile .v { font-size: 18px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>我的雲端看盤</h1>
+    <span class="updated" id="updated">載入中…</span>
+    <span class="spacer"></span>
+    <a class="btn" href="../">🌏 全球看板</a>
+    <a class="btn" id="editBtn" href="#" target="_blank" rel="noopener">⚙️ 修改設定</a>
+    <button class="btn" id="colorBtn">紅漲綠跌</button>
+  </header>
+  <div id="banner"></div>
+  <ul class="notes" id="notes"></ul>
+
+  <section class="panel">
+    <h2>模擬帳戶</h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="chart" id="equity"></div>
+  </section>
+
+  <section class="panel">
+    <h2>持股</h2>
+    <div class="scroll" id="positions"></div>
+  </section>
+
+  <section class="panel">
+    <h2>自選股</h2>
+    <div class="cards" id="watch"></div>
+  </section>
+
+  <section class="panel">
+    <h2>提醒紀錄</h2>
+    <ul class="list" id="alerts"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>交易紀錄</h2>
+    <div class="scroll" id="trades"></div>
+  </section>
+
+  <section class="panel">
+    <h2>目前設定</h2>
+    <dl class="settings" id="settings"></dl>
+    <a class="btn" id="editBtn2" href="#" target="_blank" rel="noopener">⚙️ 在 GitHub 修改設定</a>
+    <p class="foot">改完按「Commit changes」存檔，15 分鐘內套用。只在各市場的交易時間內判斷訊號、自動交易。
+      這是公開網頁，模擬帳戶是虛擬的錢。</p>
+  </section>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+let data = null, lastError = null;
+const KIND_ICON = { buy: "🟢", sell: "🔴", above: "⬆️", below: "⬇️", stop: "🛑" };
+
+function pref(key, val) {
+  try {
+    if (val === undefined) return localStorage.getItem("wm." + key);
+    localStorage.setItem("wm." + key, val);
+  } catch (e) { return null; }
+}
+function applyPrefs() {
+  const colors = pref("colors") || "tw";
+  document.documentElement.dataset.colors = colors;
+  $("colorBtn").textContent = colors === "tw" ? "紅漲綠跌" : "綠漲紅跌";
+  const theme = pref("theme") || "auto";
+  if (theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+}
+$("colorBtn").onclick = () => { pref("colors", (pref("colors") || "tw") === "tw" ? "intl" : "tw"); applyPrefs(); };
+
+function el(tag, attrs = {}, text) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+function svg(tag, attrs = {}) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+function fmt(v, d = 2) {
+  if (v == null || isNaN(v)) return "—";
+  return Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+const dirClass = (v) => (v > 0 ? "rise" : v < 0 ? "fall" : "flat");
+const arrow = (v) => (v > 0 ? "▲" : v < 0 ? "▼" : "–");
+const pct = (v) => (v == null ? "—" : `${arrow(v)} ${v > 0 ? "+" : ""}${Number(v).toFixed(2)}%`);
+const money = (v) => fmt(v, 0);
+const wan = (v) => `${(v / 10000).toFixed(v >= 1e6 ? 1 : 2).replace(/\.?0+$/, "")} 萬`;   // 圖上標籤用「萬」比較短
+
+// ---------- 交易時間（瀏覽器當下時間） ----------
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function zoned(tz) {
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const p = Object.fromEntries(f.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { wd: WEEKDAYS.indexOf(p.weekday), mins: ((+p.hour) % 24) * 60 + (+p.minute) };
+}
+const toMins = (s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+function exStatus(key) {
+  const ex = data && data.exchanges && data.exchanges[key];
+  if (!ex) return "closed";
+  const t = zoned(ex.tz);
+  if (ex.always === "24/7") return "open";
+  if (ex.always === "24/5") return (t.wd === 5 || (t.wd === 6 && t.mins < 1020) || (t.wd === 4 && t.mins >= 1020)) ? "closed" : "open";
+  if (t.wd >= 5) return "closed";
+  return ex.sessions.some(([a, b]) => toMins(a) <= t.mins && t.mins < toMins(b)) ? "open" : "closed";
+}
+
+// ---------- 畫面 ----------
+function showUpdated() {
+  const err = lastError ? `⚠ 更新失敗：${lastError}　` : "";
+  if (!data) { $("updated").textContent = err || "載入中…"; return; }
+  const mins = Math.max(0, Math.round((Date.now() - Date.parse(data.updated_utc)) / 60000));
+  const ago = mins < 1 ? "剛剛" : mins < 60 ? `${mins} 分鐘前` : `${Math.floor(mins / 60)} 小時 ${mins % 60} 分鐘前`;
+  $("updated").textContent = `${err}資料時間 ${data.updated.slice(5, 16)}（台北，${ago}）` +
+    (!err && mins > 90 ? "　⚠ 雲端更新可能暫停了" : "");
+}
+
+function render() {
+  $("editBtn").href = $("editBtn2").href = data.edit_url;
+  // 設定錯誤
+  const b = $("banner"); b.replaceChildren();
+  if (data.config_errors.length) {
+    const box = el("div", { class: "banner" }, "⚠ 設定檔有問題：");
+    const ul = el("ul");
+    data.config_errors.forEach((e) => ul.append(el("li", {}, e)));
+    box.append(ul); b.append(box);
+  }
+  const notes = $("notes"); notes.replaceChildren();
+  data.notes.forEach((n) => notes.append(el("li", {}, n)));
+
+  // 帳戶
+  const a = data.account;
+  const tiles = [["總資產", money(a.total), ""], ["報酬率", pct(a.return_pct), dirClass(a.return_pct)],
+                 ["現金", money(a.cash), ""], ["持股市值", money(a.market_value), ""]];
+  $("tiles").replaceChildren(...tiles.map(([k, v, c]) => {
+    const t = el("div", { class: "tile" });
+    t.append(el("div", { class: "k" }, k), el("div", { class: "v " + c }, v));
+    return t;
+  }));
+  equityChart($("equity"), data.equity, a.initial);
+
+  // 持股
+  if (!data.positions.length) $("positions").replaceChildren(el("div", { class: "empty" }, "目前沒有持股"));
+  else {
+    const t = el("table");
+    const h = el("tr");
+    ["股票", "股數", "成本", "現價", "損益", "%"].forEach((x) => h.append(el("th", {}, x)));
+    t.append(h);
+    for (const p of data.positions) {
+      const r = el("tr");
+      r.append(el("td", {}, `${p.code} ${p.name}`), el("td", {}, fmt(p.shares, 0)), el("td", {}, fmt(p.avg_cost)),
+               el("td", {}, fmt(p.price)), el("td", { class: dirClass(p.pnl) }, money(p.pnl)),
+               el("td", { class: dirClass(p.pnl_pct) }, pct(p.pnl_pct)));
+      t.append(r);
+    }
+    $("positions").replaceChildren(t);
+  }
+
+  // 自選股
+  $("watch").replaceChildren(...data.watch.map(watchCard));
+
+  // 提醒
+  const al = $("alerts"); al.replaceChildren();
+  if (!data.alerts.length) al.append(el("li", { class: "empty" }, "還沒有提醒"));
+  for (const x of data.alerts) {
+    const li = el("li");
+    li.append(el("span", { class: "t" }, x.time.slice(5, 16)), document.createTextNode(`${KIND_ICON[x.kind] || "•"} ${x.message}`));
+    al.append(li);
+  }
+
+  // 交易
+  if (!data.trades.length) $("trades").replaceChildren(el("div", { class: "empty" }, "還沒有交易"));
+  else {
+    const t = el("table");
+    const h = el("tr");
+    ["時間", "買賣", "股票", "股數", "價格", "金額", "損益", "原因"].forEach((x) => h.append(el("th", {}, x)));
+    t.append(h);
+    for (const x of data.trades) {
+      const r = el("tr");
+      r.append(el("td", {}, x.time.slice(5, 16)), el("td", { class: x.side === "買進" ? "rise" : "fall" }, x.side),
+               el("td", {}, x.code), el("td", {}, fmt(x.shares, 0)), el("td", {}, fmt(x.price)),
+               el("td", {}, money(x.cash_flow)), el("td", { class: dirClass(x.pnl || 0) }, x.pnl == null ? "" : money(x.pnl)),
+               el("td", {}, x.reason));
+      t.append(r);
+    }
+    $("trades").replaceChildren(t);
+  }
+
+  // 設定
+  const s = data.settings, dl = $("settings"); dl.replaceChildren();
+  const rows = [["主策略", s.strategies[0] ? s.strategies[0].name : "—"],
+                ["其他策略", s.strategies.slice(1).map((x) => x.name).join("、") || "—"],
+                ["自動交易", s.auto_trade ? `開（每次買 ${money(s.auto_buy_amount)}）` : "關"],
+                ["停損", s.stop_loss_pct ? `虧損 ${s.stop_loss_pct}% 賣出` : "不停損"],
+                ["均線", `MA${s.short_ma} / MA${s.long_ma}`]];
+  for (const [k, v] of rows) dl.append(el("dt", {}, k), el("dd", {}, v));
+}
+
+function watchCard(w) {
+  const c = el("div", { class: "card" });
+  const top = el("div", { class: "top" });
+  top.append(el("span", { class: "name" }, `${w.name || w.code}`), el("span", { class: "meta" }, w.name ? w.code : ""));
+  c.append(top);
+  if (w.error) { c.append(el("div", { class: "meta" }, "⚠ " + w.error)); return c; }
+  const star = w.tw && !w.live ? " *" : "";
+  c.append(el("div", { class: "price" }, fmt(w.price) + star));
+  c.append(el("div", { class: dirClass(w.change_pct) }, pct(w.change_pct)));
+  c.append(el("div", { class: "meta" }, `MA${data.settings.short_ma} ${fmt(w.short_ma)}　MA${data.settings.long_ma} ${fmt(w.long_ma)}　RSI ${fmt(w.rsi, 0)}　${w.trend === "多" ? "多頭" : "空頭"}`));
+  const chips = el("div", { class: "chips" });
+  for (const sg of w.signals) chips.append(el("span", { class: "chip " + (sg.dir > 0 ? "buy" : "sell"), title: sg.reason }, `${sg.dir > 0 ? "買" : "賣"}・${sg.name}`));
+  if (w.held) chips.append(el("span", { class: "chip" }, w.held_only ? "持股中（已移出自選股）" : "持股中"));
+  const lim = w.limits || {};
+  if (lim.lower != null || lim.upper != null) chips.append(el("span", { class: "chip" }, `提醒 ${lim.lower ?? "—"}～${lim.upper ?? "—"}`));
+  if (chips.childNodes.length) c.append(chips);
+  const st = exStatus(w.exchange);
+  const p = el("span", { class: "pill" + (st === "open" ? " open" : "") });
+  p.append(el("span", { class: "dot" }), document.createTextNode(`${(data.exchanges[w.exchange] || {}).name || ""} ${st === "open" ? "交易中" : "休市"}`));
+  c.append(p);
+  return c;
+}
+
+function equityChart(box, pts, initial) {
+  box.replaceChildren();
+  if (!pts || pts.length < 2) { box.append(el("div", { class: "empty" }, "資產走勢會在累積幾次更新後出現")); return; }
+  const W = Math.max(300, box.clientWidth), H = 160, m = { l: 6, r: 70, t: 10, b: 20 };
+  const vals = pts.map((p) => p[1]), n = vals.length;
+  let lo = Math.min(...vals, initial), hi = Math.max(...vals, initial);
+  const pad = (hi - lo) * 0.1 || hi * 0.01 || 1; lo -= pad; hi += pad;
+  const X = (i) => m.l + i / (n - 1) * (W - m.l - m.r), Y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "模擬帳戶總資產走勢" });
+  s.append(svg("line", { x1: m.l, x2: W - m.r, y1: Y(initial), y2: Y(initial), stroke: "var(--axis)", "stroke-dasharray": "3 3" }));
+  const lbl = svg("text", { class: "tick", x: W - m.r + 6, y: Y(initial) + 4 }); lbl.textContent = "本金 " + wan(initial); s.append(lbl);
+  const last = vals[n - 1], color = last > initial ? "var(--rise-x)" : last < initial ? "var(--fall-x)" : "var(--flat)";
+  const line = vals.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  s.append(svg("polyline", { points: line, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round" }));
+  const endLbl = svg("text", { class: "tick", x: W - m.r + 6, y: Y(last) + 4 }); endLbl.textContent = wan(last); s.append(endLbl);
+  const d0 = svg("text", { class: "tick", x: m.l, y: H - 4 }); d0.textContent = pts[0][0].slice(5, 10); s.append(d0);
+  const d1 = svg("text", { class: "tick", x: W - m.r, y: H - 4, "text-anchor": "end" }); d1.textContent = pts[n - 1][0].slice(5, 10); s.append(d1);
+  const dot = svg("circle", { r: 4, fill: color, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" });
+  s.append(dot);
+  const tip = el("div", { class: "tip" });
+  const hit = svg("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" });
+  const move = (cx) => {
+    const r = s.getBoundingClientRect();
+    const i = Math.max(0, Math.min(n - 1, Math.round(((cx - r.left) * W / r.width - m.l) / (W - m.l - m.r) * (n - 1))));
+    dot.setAttribute("cx", X(i)); dot.setAttribute("cy", Y(vals[i])); dot.setAttribute("visibility", "visible");
+    const t = new Date(pts[i][0]);
+    tip.textContent = `${t.toLocaleString("zh-TW", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}　${money(vals[i])}`;
+    tip.style.display = "block";
+    const left = X(i) * r.width / W;
+    tip.style.left = (left > r.width / 2 ? left - tip.offsetWidth - 10 : left + 10) + "px";
+    tip.style.top = "0px";
+  };
+  hit.addEventListener("mousemove", (e) => move(e.clientX));
+  hit.addEventListener("touchmove", (e) => { move(e.touches[0].clientX); e.preventDefault(); }, { passive: false });
+  hit.addEventListener("mouseleave", () => { tip.style.display = "none"; dot.setAttribute("visibility", "hidden"); });
+  s.append(hit);
+  box.append(s, tip);
+}
+
+async function load() {
+  try {
+    const r = await fetch(`data.json?t=${Date.now()}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status === 404 ? "雲端看盤還沒產生資料，請等下一次更新" : `讀取失敗（${r.status}）`);
+    data = await r.json();
+    lastError = null;
+    render();
+  } catch (e) {
+    lastError = e.message;
+  }
+  showUpdated();
+}
+applyPrefs();
+load();
+setInterval(load, 60000);
+setInterval(() => { showUpdated(); if (data) $("watch").replaceChildren(...data.watch.map(watchCard)); }, 30000);
+let rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => data && equityChart($("equity"), data.equity, data.account.initial), 200); });
+</script>
+</body>
+</html>

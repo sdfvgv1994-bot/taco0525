@@ -7,6 +7,7 @@
 | [`stock_monitor/`](stock_monitor/) | 自動看盤系統＋模擬下單 | `python stock_monitor/monitor.py` |
 | [`stock_backtest/`](stock_backtest/) | 策略回測：6 種策略、可一次比較（含固定 / 移動停損） | `python stock_backtest/backtest.py 2330 --compare` |
 | [`world_market/`](world_market/) | 全球股市看板（網頁；也有[雲端版](https://sdfvgv1994-bot.github.io/taco0525/)，電腦關機也能用手機看） | `python world_market/app.py` |
+| [`cloud_monitor/`](cloud_monitor/) | 雲端看盤（[網頁](https://sdfvgv1994-bot.github.io/taco0525/monitor/)；GitHub 每 15 分鐘自動跑、模擬交易，手機改設定） | 自動執行，設定在 `cloud_monitor/config.toml` |
 | [`snake/`](snake/) | 貪食蛇 | `python snake/snake.py` |
 | [`kaleidoscope/`](kaleidoscope/) | 萬花筒畫板 | `python kaleidoscope/kaleidoscope.py` |
 
