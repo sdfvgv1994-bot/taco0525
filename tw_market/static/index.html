@@ -549,7 +549,10 @@ const price = (v) => fmt(v, 2);
 const lots = (v) => fmt(v, 0);
 const sLots = (v) => (isNum(v) ? sgn(v) + fmt(v, 0) : "—");
 const sPrice = (v) => (isNum(v) ? sgn(v) + fmt(v, 2) : "—");
-const pct = (v) => (isNum(v) ? sgn(v) + fmt(v, 2) + "%" : "—");
+// 新上市（前五天沒有漲跌幅限制）可能漲超過 100%：這時只留 1 位小數，手機的漲跌% 欄才放得下
+const pct = (v) => (isNum(v) ? sgn(v) + fmt(v, Math.abs(v) >= 99.995 ? 1 : 2) + "%" : "—");
+// 表格裡的本益比：上千倍時小數沒有意義，拿掉才放得進手機的窄欄
+const peText = (v) => fmt(v, isNum(v) && v >= 999.995 ? 0 : 2);
 // 不到 0.01 億（100 萬元）的成交值不要顯示成「0.00」，看起來像沒成交
 const yiNum = (v) => (!isNum(v) ? "—" : v > 0 && v < 1e6 ? "<0.01" : fmt(v / 1e8, 2));
 function money(v) {
@@ -940,12 +943,12 @@ const COLS = {
   rk: { h: "#", w: [22, 36], cls: "rk", f: (r, i) => String(i + 1) },
   nm: { h: "名稱", w: [0, 170], cls: "nm l", html: nameCell },
   ind: { h: "產業", w: [0, 120], cls: "l muted", f: (r) => r.group },
-  close: { h: "收盤", w: [68, 84], f: (r) => price(r.close) },
+  close: { h: "收盤", w: [66, 84], f: (r) => price(r.close) },
   chg: { h: "漲跌", w: [0, 76], f: (r) => sPrice(r.change), d: (r) => r.change },
-  pct: { h: "漲跌%", w: [72, 84], html: pctCell, d: (r) => r.change_pct },
+  pct: { h: "漲跌%", w: [70, 84], html: pctCell, d: (r) => r.change_pct },
   vol: { h: "成交量（張）", ph: "量（張）", w: [70, 104], f: (r) => lots(r.volume) },
   val: { h: "成交值（億）", ph: "值（億）", w: [64, 100], f: (r) => yiNum(r.value) },
-  pe: { h: "本益比", w: [52, 72], f: (r) => fmt(r.pe, 2) },
+  pe: { h: "本益比", w: [52, 72], f: (r) => peText(r.pe) },
   dy: { h: "殖利率", w: [56, 72], f: (r) => unit(fmt(r.dividend_yield, 2), "%") },
   pb: { h: "淨值比", w: [50, 72], f: (r) => fmt(r.pb, 2) },
   foreign: { h: "外資（張）", w: [72, 96], f: (r) => sLots(r.foreign), d: (r) => r.foreign },
@@ -1157,7 +1160,7 @@ function renderIndDrill(box, g) {
   sub.innerHTML = `${g.n} 檔・平均漲跌（等權） <b class="${dir(g.avg)}">${pct(g.avg)}</b>・` +
     `上漲 ${g.up}、平盤 ${g.flat}、下跌 ${g.down} 家・成交值 ${money(g.value)}`;
   const rows = g.rows.slice().sort(cmpNum("change_pct", -1));
-  const keys = isPhone() ? ["rk", "nm", "close", "pct", "val"]
+  const keys = isPhone() ? fitKeys(["rk", "nm", "close", "pct", "val"], ["rk"])
     : fitKeys(["rk", "nm", "close", "chg", "pct", "vol", "val", "pe", "dy"], ["chg", "pe", "dy", "vol"]);
   box.replaceChildren(head, sub, tableWrap(listHTML(rows, keys, "pct")));
 }
@@ -1191,7 +1194,7 @@ function renderChips(box) {
   }
   const sub = el("div", { class: "sub" }, `${note}・${marketName(o.market)}${K.label}前 ${top.length} 名，單位：張`);
   const others = (ks) => ks.filter((k) => k !== K.key);
-  const keys = isPhone() ? ["rk", "nm", "close", "pct", K.key]
+  const keys = isPhone() ? fitKeys(["rk", "nm", "close", "pct", K.key], ["rk"])
     : K.grp === "inst"
       ? fitKeys(["rk", "nm", "ind", "close", "pct", "foreign", "trust", "dealer", "inst_total"],
                 ["ind", ...others(["dealer", "trust", "foreign", "inst_total"])])
@@ -1277,7 +1280,7 @@ function renderAllTab(box) {
   for (const r of slice) {
     h += `<tr data-code="${esc(r.code)}">${ph ? "" : `<td class="c1 l">${esc(r.code)}</td>`}<td class="c2 l nm">${nameCell(r)}</td>` +
       `<td>${price(r.close)}</td><td class="${dir(r.change_pct)}">${pctCell(r)}</td><td>${lots(r.volume)}</td>` +
-      `<td>${yiNum(r.value)}</td><td>${fmt(r.pe, 2)}</td><td>${unit(fmt(r.dividend_yield, 2), "%")}</td>` +
+      `<td>${yiNum(r.value)}</td><td>${peText(r.pe)}</td><td>${unit(fmt(r.dividend_yield, 2), "%")}</td>` +
       `<td class="${dir(r.foreign)}">${sLots(r.foreign)}</td></tr>`;
   }
   h += "</tbody></table>";
