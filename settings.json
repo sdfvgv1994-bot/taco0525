@@ -1,0 +1,16 @@
+{
+  "strategies": [
+    "ma",
+    "macd"
+  ],
+  "strategy_params": {},
+  "short_ma": 5,
+  "long_ma": 20,
+  "interval": 60,
+  "stop_loss_pct": 8.0,
+  "auto_trade": true,
+  "auto_buy_amount": 100000.0,
+  "source": "yahoo",
+  "demo": false,
+  "realtime": true
+}

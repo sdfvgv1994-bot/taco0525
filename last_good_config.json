@@ -1,0 +1,28 @@
+{
+  "watchlist": [
+    "2330",
+    "0050",
+    "2454",
+    "2317",
+    "AAPL",
+    "NVDA"
+  ],
+  "limits": {
+    "2330": {
+      "lower": 1800,
+      "upper": 3000
+    }
+  },
+  "settings": {
+    "strategies": [
+      "ma",
+      "macd"
+    ],
+    "auto_trade": true,
+    "auto_buy_amount": 100000.0,
+    "stop_loss_pct": 8.0,
+    "short_ma": 5,
+    "long_ma": 20
+  },
+  "strategy_params": {}
+}

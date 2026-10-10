@@ -1,0 +1,26 @@
+{
+  "2330": {
+    "lower": 1800,
+    "upper": 3000
+  },
+  "0050": {
+    "lower": null,
+    "upper": null
+  },
+  "2454": {
+    "lower": null,
+    "upper": null
+  },
+  "2317": {
+    "lower": null,
+    "upper": null
+  },
+  "AAPL": {
+    "lower": null,
+    "upper": null
+  },
+  "NVDA": {
+    "lower": null,
+    "upper": null
+  }
+}
