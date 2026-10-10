@@ -359,6 +359,7 @@ function card(it) {
   foot.append(p, el("span", {}, it.spark ? `近 ${it.spark.length} 日` : ""));
   b.append(foot);
   b.setAttribute("aria-label", `${it.name} ${fmt(it.price, it.decimals)} ${pctText(v)}，點擊看詳細走勢`);
+  if (it.source) b.title = `資料來源：${it.source}`;
   b.onclick = () => openDetail(it);
   return b;
 }

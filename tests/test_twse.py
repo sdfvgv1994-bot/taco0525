@@ -787,3 +787,89 @@ def test_diagnose_reports_failure(tmp_path):
     lines = []
     twse.diagnose(["2330"], cl, out=lines.append)
     assert any("沒有任何資料" in l for l in lines)
+
+
+# ---------- 第二輪審查補強 ----------
+def test_warmup_tried_once_even_if_homepage_fails(tmp_path):
+    class S(FakeSession):
+        def get(self, url, params=None, timeout=None, **kw):
+            self.calls.append(url)
+            if url == twse.URL_MIS_HOME:
+                return FakeResp("<html>502</html>", status=502)
+            return FakeResp(MIS)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=S(None), min_interval=0)
+    for _ in range(3):
+        assert cl.realtime(["2330"])["2330"].name == "台積電"
+    assert cl.session.calls == [twse.URL_MIS_HOME, twse.URL_MIS, twse.URL_MIS, twse.URL_MIS]
+
+
+def test_query_failure_rewarms_next_time(tmp_path):
+    class S(FakeSession):
+        def get(self, url, params=None, timeout=None, **kw):
+            self.calls.append(url)
+            if url == twse.URL_MIS_HOME:
+                return FakeResp("<html></html>")
+            ok = self.calls.count(twse.URL_MIS) > 1
+            return FakeResp(MIS) if ok else FakeResp({}, status=500)
+    cl = twse.TwseClient(cache_dir=tmp_path, session=S(None), min_interval=0)
+    with pytest.raises(twse.TwseError):
+        cl.realtime(["2330"])
+    cl.realtime(["2330"])
+    assert cl.session.calls.count(twse.URL_MIS_HOME) == 2
+
+
+def test_cached_name_without_network(tmp_path):
+    cl, _ = make_client(tmp_path, stock_router())
+    cl.stock_month("2330", 2024, 10)
+    otc, _ = make_client(tmp_path, stock_router(listed=False))
+    otc.tpex_month("6488", 2024, 10)
+
+    class NoNet(FakeSession):
+        def get(self, *a, **kw):
+            raise AssertionError("不該連網")
+    fresh = twse.TwseClient(cache_dir=tmp_path, session=NoNet(None), min_interval=0)
+    assert fresh.cached_name("2330") == "台積電"
+    assert fresh.cached_name("6488") == "環球晶"
+    assert fresh.cached_name("9999") is None
+
+
+def test_monitor_marks_items_missing_from_partial_realtime(tmp_path, capsys):
+    quotes = twse.parse_mis(MIS)
+    m = _monitor_with(tmp_path, lambda items: {"2330": quotes["2330"]}, {"0050": "元大台灣50"})
+    m.add("2330")
+    m.add("0050")
+    res = m.refresh(datetime(2024, 10, 3, 10, 0))
+    assert res.live == {"2330"} and res.realtime_error is None
+    assert any("沒有回傳 0050" in n for n in res.notes)
+    from stock_monitor import monitor as ui
+    ui.show_quotes(m, res)
+    out = capsys.readouterr().out
+    line_2330 = next(l for l in out.splitlines() if l.startswith("2330"))
+    line_0050 = next(l for l in out.splitlines() if l.startswith("0050"))
+    assert "*" not in line_2330 and "985.00*" in line_0050
+
+
+def test_monitor_names_persist_between_runs(tmp_path):
+    quotes = twse.parse_mis(MIS)
+    m = _monitor_with(tmp_path, lambda items: {"2330": quotes["2330"]})
+    m.add("2330")
+    m.refresh(datetime(2024, 10, 3, 10, 0))
+    def boom(items):
+        raise twse.TwseError("down")
+    again = _monitor_with(tmp_path, boom)            # 下次執行：即時報價、歷史股名都拿不到
+    again.refresh(datetime(2024, 10, 3, 10, 5))
+    assert again.names["2330"] == "台積電"
+
+
+def test_quote_table_aligns_with_long_names(tmp_path, capsys):
+    from stock_monitor import monitor as ui
+    names = {"2330": "台積電", "00878": "國泰永續高股息", "0050": "元大台灣50"}
+    m = _monitor_with(tmp_path, lambda items: {}, names)
+    for c in names:
+        m.add(c)
+    m.add("AAPL")
+    res = m.refresh(datetime(2024, 10, 3, 10, 0))
+    ui.show_quotes(m, res)
+    rows = [l for l in capsys.readouterr().out.splitlines() if "985.00" in l]
+    ends = {ui.dwidth(l[:l.index("985.00") + 6]) for l in rows}
+    assert len(rows) == 4 and len(ends) == 1          # 價格欄位每一列都對齊

@@ -56,6 +56,7 @@ class RefreshResult:
     trades: list = field(default_factory=list)      # 這次自動成交
     notes: list = field(default_factory=list)       # 其他訊息（例如自動買進失敗）
     live: set = field(default_factory=set)          # 價格來自證交所即時報價的代號
+    realtime_tried: bool = False                    # 這次有沒有向證交所查即時報價
     realtime_error: str | None = None               # 即時報價抓不到的原因
 
 
@@ -66,6 +67,7 @@ class Monitor:
         # name_lookup(代號) → 股名；預設查證交所歷史資料標題裡的股名
         self._name_lookup = name_lookup
         self.realtime_error: str | None = None
+        self.realtime_tried = False
         self.store = store
         self.fetcher = fetcher
         self.settings = store.settings()
@@ -73,7 +75,8 @@ class Monitor:
         self.account = Account.from_dict(store.load("account.json", None))
         self.alert_state = store.load("alerts.json", {"date": "", "fired": [], "history": []})
         self.last_prices: dict = {}
-        self.names: dict = {}   # 代號 → 股名（證交所即時報價或歷史資料提供）
+        # 代號 → 股名（證交所即時報價或歷史資料提供），存檔起來，連不上證交所時也有股名
+        self.names: dict = store.load("names.json", {})
 
     # ---- 存檔 ----
     def save(self):
@@ -81,6 +84,7 @@ class Monitor:
         self.store.save_watchlist(self.watchlist)
         self.store.save("account.json", self.account.to_dict())
         self.store.save("alerts.json", self.alert_state)
+        self.store.save("names.json", self.names)
 
     # ---- 策略 ----
     @property
@@ -144,6 +148,7 @@ class Monitor:
         """台股自選股一次向證交所查即時報價；示範模式或指定 Yahoo 時不查。"""
         s = self.settings
         self.realtime_error = None
+        self.realtime_tried = False
         if s.get("demo") or s.get("source", "auto") == "yahoo":
             return {}
         tw = [n for n in self.watchlist if uses_twse(parse_symbol(n))]
@@ -151,6 +156,7 @@ class Monitor:
             return {}
         items = ["^TWII" if parse_symbol(n).candidates[0] == "^TWII" else n.split(".")[0]
                  for n in tw]
+        self.realtime_tried = True
         try:
             if self._realtime is None:
                 from common import twse
@@ -170,7 +176,7 @@ class Monitor:
             return None
         if self._name_lookup is None:
             from common import twse
-            self._name_lookup = lambda code: twse.client().names.get(code)
+            self._name_lookup = lambda code: twse.client().cached_name(code)
         return self._name_lookup(sym.candidates[0].split(".")[0])
 
     def refresh(self, now: datetime | None = None) -> RefreshResult:
@@ -179,9 +185,7 @@ class Monitor:
         res = RefreshResult()
         quotes = self.realtime_quotes()
         res.realtime_error = self.realtime_error
-        if self.realtime_error:
-            res.notes.append(f"證交所即時報價暫時抓不到（{self.realtime_error}），"
-                             f"標 * 的台股價格是最近一天的收盤價")
+        res.realtime_tried = self.realtime_tried
         for name, q in quotes.items():
             if q.name and q.name != name:
                 self.names[name] = q.name
@@ -211,6 +215,15 @@ class Monitor:
                 self.store.log("提醒 " + alert.message, now)
                 if s["auto_trade"]:
                     self._auto_trade(alert, snap, res, now)
+        if res.realtime_tried:
+            missing = [n for n in res.snapshots
+                       if uses_twse(parse_symbol(n)) and n not in res.live]
+            if self.realtime_error:
+                res.notes.append(f"證交所即時報價暫時抓不到（{self.realtime_error}），"
+                                 f"標 * 的台股價格是最近一天的收盤價")
+            elif missing:
+                res.notes.append(f"證交所即時報價沒有回傳 {'、'.join(missing)}，"
+                                 f"標 * 的是最近一天的收盤價")
         self.save()
         return res
 

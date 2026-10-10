@@ -20,10 +20,14 @@ from stock_monitor.account import TradeError  # noqa: E402
 from stock_monitor.engine import Monitor  # noqa: E402
 from stock_monitor.storage import Store  # noqa: E402
 
+def dwidth(text: str) -> int:
+    """顯示寬度（中文字佔兩格）。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+
+
 def pad(text: str, width: int) -> str:
-    """依「顯示寬度」補空白（中文字佔兩格），讓表格對齊。"""
-    w = sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
-    return text + " " * max(0, width - w)
+    """依顯示寬度補空白，讓表格對齊。"""
+    return text + " " * max(0, width - dwidth(text))
 
 
 KIND_ICON = {"buy": "🟢", "sell": "🔴", "above": "⬆️ ", "below": "⬇️ ", "stop": "🛑",
@@ -37,11 +41,13 @@ def bell():
 def show_quotes(m: Monitor, res):
     names = "、".join(strat.get(k).name for k in m.settings["strategies"])
     print(f"\n=== 報價 {datetime.now():%H:%M:%S}（策略：{names}）===")
-    print(f"{pad('代號', 14)}{'現價':>10}{'漲跌%':>8}{'MA' + str(m.settings['short_ma']):>10}"
+    labels = {n: f"{n} {m.names.get(n, '')}".strip() for n in m.watchlist}
+    width = max([14] + [dwidth(x) + 2 for x in labels.values()])
+    print(f"{pad('代號', width)}{'現價':>10}{'漲跌%':>8}{'MA' + str(m.settings['short_ma']):>10}"
           f"{'MA' + str(m.settings['long_ma']):>10}{'RSI':>6}  趨勢  持股")
     for name in m.watchlist:
         if name in res.errors:
-            print(f"{name:<10}  ⚠ {res.errors[name][:60]}")
+            print(f"{pad(labels[name], width)}  ⚠ {res.errors[name][:60]}")
             continue
         s = res.snapshots.get(name)
         if not s:
@@ -49,11 +55,10 @@ def show_quotes(m: Monitor, res):
         trend = "多" if s.short_ma > s.long_ma else "空"
         pos = m.account.positions.get(name)
         held = f"{pos['shares']} 股" if pos else ""
-        label = f"{name} {m.names.get(name, '')}".strip()
         # 台股沒拿到即時報價時，價格是最近一天的收盤價，加上 * 標記
-        mark = "*" if res.realtime_error is not None and name not in res.live and \
+        mark = "*" if res.realtime_tried and name not in res.live and \
             uses_twse(parse_symbol(name)) else " "
-        print(f"{pad(label, 14)}{s.price:>9.2f}{mark}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"
+        print(f"{pad(labels[name], width)}{s.price:>9.2f}{mark}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"
               f"{s.long_ma:>10.2f}{s.rsi:>6.0f}   {trend}   {held}")
         today = [f"{'買' if v == 1 else '賣'}:{strat.get(k).name}" for k, v in s.signals.items() if v]
         if today:

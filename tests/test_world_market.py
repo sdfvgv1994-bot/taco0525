@@ -94,8 +94,10 @@ def test_overview_mixes_sources():
     assert {c["key"] for c in ov["clocks"]} == {"TW", "JP", "UK", "EU", "US"}
 
 
-def test_overview_realtime_failure_uses_twse_close(capsys):
-    """只有即時報價抓不到：台灣項目照樣用證交所的歷史收盤價，不改用 Yahoo。"""
+def test_overview_realtime_failure_uses_twse_close(capsys, monkeypatch):
+    """只有即時報價抓不到（收盤後）：台灣項目照樣用證交所的歷史收盤價，不改用 Yahoo。"""
+    from world_market import data as wm_data
+    monkeypatch.setattr(wm_data, "market_status", lambda key, now=None: "closed")
     yh = FakeYahoo()
     ov = DataService(yahoo_download=yh, twse_client=FakeTwse(realtime_fail=True)).overview()
     items = {i["symbol"]: i for g in ov["groups"] for i in g["items"]}
@@ -197,3 +199,16 @@ def test_text_mode(capsys):
     app.main(["--demo", "--text"])
     out = capsys.readouterr().out
     assert "全球股市總覽" in out and "【亞太】" in out and "日經 225" in out
+
+
+def test_overview_realtime_failure_during_session_prefers_yahoo(monkeypatch):
+    """盤中即時報價抓不到：證交所日 K 只到昨天，改用 Yahoo（有今天的延遲報價）。"""
+    from world_market import data as wm_data
+    tpe = ZoneInfo("Asia/Taipei")
+    monkeypatch.setattr(wm_data, "market_status", lambda key, now=None: "open")
+    monkeypatch.setattr(wm_data, "local_time", lambda key, now=None: datetime(2026, 10, 9, 10, 0, tzinfo=tpe))
+    yh = FakeYahoo()
+    ov = DataService(yahoo_download=yh, twse_client=FakeTwse(realtime_fail=True)).overview()
+    items = {i["symbol"]: i for g in ov["groups"] for i in g["items"]}
+    assert items["2330"]["source"] == "Yahoo Finance"
+    assert any("2330.TW" in syms for syms, _ in yh.calls)

@@ -127,6 +127,9 @@ class DataService:
             if q is None or q.price is None:
                 if df is None or df.empty:
                     continue
+                if market_status("TW") == "open" and df.index[-1].date() < local_time("TW").date():
+                    # 盤中沒有即時報價：證交所日 K 只到昨天，交給 Yahoo（有今天的延遲報價）
+                    continue
                 closes = df["Close"]
                 out[it.symbol] = {"df": df, "price": float(closes.iloc[-1]),
                                   "prev": float(closes.iloc[-2]) if len(closes) > 1 else None,

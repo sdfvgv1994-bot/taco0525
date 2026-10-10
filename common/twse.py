@@ -435,6 +435,23 @@ class TwseClient:
         gate.clear_blocked(since=sent_at)
         return js
 
+    def cached_name(self, code: str) -> str | None:
+        """不連網，從快取裡任何一個月份的資料找股名（證交所暫停連線時也查得到）。"""
+        if code in self.names:
+            return self.names[code]
+        if not self.cache_dir or not self.cache_dir.exists():
+            return None
+        for prefix, getter in (("tse", name_from_stock_day), ("otc", name_from_tpex)):
+            for path in sorted(self.cache_dir.glob(f"{prefix}_{code}_*.json"), reverse=True):
+                try:
+                    name = getter(json.loads(path.read_text(encoding="utf-8")))
+                except (OSError, ValueError):
+                    continue
+                if name:
+                    self.names[code] = name
+                    return name
+        return None
+
     def _cached(self, key: str, is_current: bool, fetch) -> dict:
         path = self.cache_dir / f"{key}.json" if self.cache_dir else None
         if path and path.exists():
@@ -528,8 +545,12 @@ class TwseClient:
                 ex_ch += [f"tse_{it}.tw", f"otc_{it}.tw"]
                 lookup[it] = it
         self._warm_mis()
-        js = self._get_json(URL_MIS, {"ex_ch": "|".join(ex_ch), "json": "1", "delay": "0",
-                                      "_": str(int(time.time() * 1000))})
+        try:
+            js = self._get_json(URL_MIS, {"ex_ch": "|".join(ex_ch), "json": "1", "delay": "0",
+                                          "_": str(int(time.time() * 1000))})
+        except TwseError:
+            self._mis_warm = False  # 查詢失敗，下次重新暖機
+            raise
         rtcode = str(js.get("rtcode", "0000"))
         if rtcode != "0000":
             self._mis_warm = False  # cookie 可能過期，下次重新暖機
@@ -550,12 +571,13 @@ class TwseClient:
             return
         gate = self.gate(URL_MIS_HOME)
         gate.wait_turn()
+        # 試過一次就算數：實測首頁可能回 502，但接著查報價仍會成功（並拿到 cookie），
+        # 所以不判定封鎖，也不要每次查報價都重開首頁；查詢失敗時才會重新暖機
+        self._mis_warm = True
         try:
-            r = self.session.get(URL_MIS_HOME, timeout=TIMEOUT)
+            self.session.get(URL_MIS_HOME, timeout=TIMEOUT)
         except Exception:  # noqa: BLE001 - 暖機失敗不影響接著查報價
-            return
-        # 實測首頁可能回 502，但接著查報價仍會成功（並拿到 cookie），所以這裡不判定封鎖
-        self._mis_warm = r.status_code == 200
+            pass
 
 
 _default_client: TwseClient | None = None
