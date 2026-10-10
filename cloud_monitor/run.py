@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import tomllib
@@ -21,6 +22,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from cloud_monitor import notify  # noqa: E402
 from common import strategies as strat  # noqa: E402
 from common.market import parse_symbol, uses_twse  # noqa: E402
 from stock_monitor.engine import Monitor  # noqa: E402
@@ -34,6 +36,7 @@ CONFIG = HERE / "config.toml"
 PAGE = HERE / "index.html"
 EDIT_URL = "https://github.com/sdfvgv1994-bot/taco0525/edit/main/cloud_monitor/config.toml"
 EQUITY_MAX = 5000
+NOTIFY_DEFAULT = {"enabled": True, "trades": True, "signals": "primary", "price_alerts": True}
 NUMBER_SETTINGS = {"auto_buy_amount": (1, 1e9), "stop_loss_pct": (0, 100),
                    "short_ma": (1, 250), "long_ma": (2, 500)}
 
@@ -131,8 +134,24 @@ def load_config(path: Path) -> tuple[dict, list]:
         if unknown:
             warnings.append(f"{st.name} 沒有參數 {', '.join(unknown)}（可用：{', '.join(st.defaults)}）")
         params[st.key] = nums
+    n = raw.get("notify") or {}
+    notify_cfg = dict(NOTIFY_DEFAULT)
+    if not isinstance(n, dict):
+        warnings.append("[notify] 的格式不對，先用預設值")
+        n = {}
+    for key in ("enabled", "trades", "price_alerts"):
+        if key in n:
+            if isinstance(n[key], bool):
+                notify_cfg[key] = n[key]
+            else:
+                warnings.append(f"notify 的 {key} 只能填 true 或 false")
+    if "signals" in n:
+        if n["signals"] in ("primary", "all", "none"):
+            notify_cfg["signals"] = n["signals"]
+        else:
+            warnings.append('notify 的 signals 只能填 "primary"、"all" 或 "none"')
     return {"watchlist": watchlist, "limits": limits, "settings": settings,
-            "strategy_params": params}, warnings
+            "strategy_params": params, "notify": notify_cfg}, warnings
 
 
 # ---------------------------------------------------------------- 交易時間
@@ -218,7 +237,11 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     del equity[:-EQUITY_MAX]
     store.save("equity.json", equity)
 
+    notify_cfg = {**NOTIFY_DEFAULT, **cfg.get("notify", {})}
+    notify_status = push_notifications(store, m, res, notify_cfg, now, log)
+
     data = page_data(m, res, now, updated_utc, total, equity, config_errors, held_only)
+    data["settings"]["notify"] = {**notify_cfg, "status": notify_status}
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "data.json").write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")),
@@ -231,6 +254,36 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     for e in config_errors:
         log(f"  ⚠ 設定：{e}")
     return data
+
+
+def push_notifications(store, m, res, cfg: dict, now: datetime, log=print) -> str:
+    """把這次新的成交和提醒合併成一則手機通知。回傳顯示在網頁上的狀態。"""
+    topic = (os.environ.get("NTFY_TOPIC") or "").strip()
+    if not cfg["enabled"]:
+        return "關閉"
+    if not topic:
+        return "還沒設定（GitHub 的 NTFY_TOPIC）"
+    status = "已開啟"
+    # 第一次看到這個頻道：送一則測試通知，確認手機收得到（只存雜湊，不存頻道名稱）
+    fp = notify.topic_fingerprint(topic)
+    state = store.load("notify.json", {})
+    try:
+        if state.get("fingerprint") != fp:
+            notify.send({"title": "雲端看盤：手機推播設定成功", "tags": ["white_check_mark"],
+                         "message": "之後有自動成交、買賣訊號、突破上下限或停損時會通知你。",
+                         "click": notify.MONITOR_URL})
+            store.save("notify.json", {"fingerprint": fp})
+            log("  已送出推播測試通知")
+        trades = res.trades if cfg["trades"] else []
+        alerts = notify.pick_alerts(res.alerts, m.settings["strategies"][0], cfg)
+        payload = notify.build_message(trades, alerts, m.names, f"{now:%m/%d %H:%M}")
+        if payload:
+            notify.send(payload)
+            log(f"  已推播：{payload['title']}")
+    except Exception as e:  # noqa: BLE001 - 推播失敗不影響看盤
+        log(f"  ⚠ 推播失敗：{e}")
+        status = f"已開啟，但這次推播失敗（{e}）"
+    return status
 
 
 def page_data(m, res, now, updated_utc, total, equity, config_errors, held_only) -> dict:

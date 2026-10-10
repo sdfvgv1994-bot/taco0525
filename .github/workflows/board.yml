@@ -73,6 +73,10 @@ jobs:
         id: monitor
         if: steps.state.outcome == 'success'
         continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}      # 手機推播的頻道名稱（在 GitHub 的 Secrets 設定）
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
         run: python cloud_monitor/run.py --state _state --out _site/monitor
 
       - name: 存回雲端看盤的資料

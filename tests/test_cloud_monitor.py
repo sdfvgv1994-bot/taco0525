@@ -185,3 +185,97 @@ def test_prefetch_names_from_twse_titles(tmp_path, monkeypatch):
     fake.calls.clear()
     cm.prefetch_names(m, TW_OPEN, log=lambda *_: None)          # 已經有名字的不再查
     assert fake.calls == []
+
+
+# ---------- 手機推播 ----------
+from cloud_monitor import notify  # noqa: E402
+from stock_monitor.signals import Alert  # noqa: E402
+
+
+def test_pick_alerts_by_setting():
+    alerts = [Alert("2330", "buy", "買 ma", "ma"), Alert("2330", "sell", "賣 macd", "macd"),
+              Alert("2330", "above", "突破", ""), Alert("2330", "stop", "停損", "")]
+    kinds = lambda cfg: [(a.kind, a.strategy) for a in notify.pick_alerts(alerts, "ma", cfg)]
+    assert kinds({"signals": "primary"}) == [("buy", "ma"), ("above", ""), ("stop", "")]
+    assert kinds({"signals": "all"})[:2] == [("buy", "ma"), ("sell", "macd")]
+    assert kinds({"signals": "none", "price_alerts": False}) == []
+
+
+def test_build_message():
+    assert notify.build_message([], [], {}, "10/08 10:00") is None
+    t = {"side": "買進", "code": "2330", "shares": 1000, "price": 1000.0, "reason": "自動：均線交叉買進"}
+    msg = notify.build_message([t], [Alert("2330", "buy", "2330 買進訊號", "ma")], {"2330": "台積電"},
+                               "10/08 10:00")
+    assert msg["title"] == "雲端看盤：1 筆成交、1 則提醒（10/08 10:00）"
+    assert "台積電" in msg["message"] and "1,000 股" in msg["message"]
+    assert msg["priority"] == 4 and msg["click"].endswith("/monitor/")
+    long = notify.build_message([], [Alert("X", "above", "很長的訊息" * 200, "")], {}, "t")
+    assert len(long["message"].encode("utf-8")) < 3700
+
+
+def test_send_uses_json_and_env():
+    calls = []
+
+    class R:
+        status_code = 200
+
+    def post(url, json=None, headers=None, timeout=None):
+        calls.append((url, json, headers))
+        return R()
+    assert "不推播" in notify.send({"title": "t"}, post=post, env={})
+    assert notify.send({"title": "台積電"}, post=post,
+                       env={"NTFY_TOPIC": "abc", "NTFY_TOKEN": "tk", "NTFY_SERVER": "https://n.example/"}) == "已推播"
+    url, body, headers = calls[0]
+    assert url == "https://n.example/" and body == {"topic": "abc", "title": "台積電"}
+    assert headers["Authorization"] == "Bearer tk"
+
+
+def test_run_pushes_once_per_new_event_and_welcome_once(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(notify, "send", lambda payload, **kw: sent.append(payload) or "已推播")
+    monkeypatch.setenv("NTFY_TOPIC", "secret-topic")
+    cfg = write_config(tmp_path / "c.toml", BASE)
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    data = run_once(tmp_path, cfg, feed, TW_OPEN)
+    assert [p["title"].split("（")[0] for p in sent] == ["雲端看盤：手機推播設定成功", "雲端看盤：1 筆成交、1 則提醒"]
+    assert data["settings"]["notify"]["status"] == "已開啟"
+    state = (tmp_path / "state" / "notify.json").read_text(encoding="utf-8")
+    assert "secret-topic" not in state                       # 公開的資料分支只存雜湊
+    sent.clear()
+    run_once(tmp_path, cfg, feed, datetime(2026, 10, 8, 10, 15))
+    assert sent == []                                        # 同一天同一個提醒不會再推
+
+
+def test_run_survives_push_failure(tmp_path, monkeypatch):
+    def boom(payload, **kw):
+        raise RuntimeError("ntfy 回應 HTTP 429")
+    monkeypatch.setattr(notify, "send", boom)
+    monkeypatch.setenv("NTFY_TOPIC", "t")
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    data = run_once(tmp_path, write_config(tmp_path / "c.toml", BASE), feed, TW_OPEN)
+    assert data["trades"] and "推播失敗" in data["settings"]["notify"]["status"]
+
+
+def test_notify_disabled_or_not_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr(notify, "send", lambda *a, **k: pytest.fail("不該推播"))
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    data = run_once(tmp_path, write_config(tmp_path / "c.toml", BASE), feed, TW_OPEN)
+    assert "還沒設定" in data["settings"]["notify"]["status"]
+    monkeypatch.setenv("NTFY_TOPIC", "t")
+    off = write_config(tmp_path / "off.toml", BASE + "\n[notify]\nenabled = false\n")
+    data = run_once(tmp_path / "b", off, feed, TW_OPEN)
+    assert data["settings"]["notify"]["status"] == "關閉"
+
+
+def test_notify_config_validation(tmp_path):
+    cfg, warnings = cm.load_config(write_config(tmp_path / "c.toml", BASE + '''
+[notify]
+enabled = "yes"
+signals = "some"
+'''))
+    assert cfg["notify"]["enabled"] is True and cfg["notify"]["signals"] == "primary"
+    assert any("enabled" in w for w in warnings) and any("signals" in w for w in warnings)

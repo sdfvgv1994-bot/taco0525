@@ -29,3 +29,10 @@ long_ma = 20               # 長均線天數
 [strategy_params]
 # rsi = { low = 25, high = 75 }
 # kd = { low = 20, high = 80 }
+
+# 手機推播（ntfy）：要先在 GitHub 設定 NTFY_TOPIC，步驟見 cloud_monitor/README.md
+[notify]
+enabled = true             # true 開、false 關
+trades = true              # 自動成交時通知
+signals = "primary"        # 買賣訊號："primary" 只通知主策略、"all" 全部策略、"none" 不通知
+price_alerts = true        # 突破上下限、停損時通知
