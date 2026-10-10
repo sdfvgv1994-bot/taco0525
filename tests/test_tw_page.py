@@ -66,5 +66,8 @@ def test_world_board_links_to_tw_only_in_static_version():
 
 def test_cloud_monitor_links_to_tw():
     html = _html(MONITOR)
-    assert '<a class="btn" href="../tw/">🇹🇼 台股總覽</a>' in html
+    # 手機上「總覽」兩個字會藏起來（四個按鈕才排得下一行），所以中間可能夾著 <span>
+    m = re.search(r'<a class="btn" href="\.\./tw/">(.*?)</a>', html)
+    assert m, "我的看盤的標題列要有連到 ../tw/ 的按鈕"
+    assert re.sub(r"<[^>]+>", "", m.group(1)) == "🇹🇼 台股總覽"
     assert "../tw/#${tw}" in html   # 自選股卡片：台股個股的名稱連到台股總覽的詳細資料

@@ -140,7 +140,9 @@ section.panel h2 { font-size: 15px; margin: 0 0 10px; font-weight: 650; }
 .bar-legend > span:nth-child(3) { text-align: right; }
 .bar-legend b { font-weight: 650; }
 .bar-legend small { display: block; color: var(--muted); font-size: 12px; }
-.per-market { color: var(--muted); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.per-market { color: var(--muted); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums;
+  display: flex; flex-wrap: wrap; gap: 0 12px; }
+.per-market span { white-space: nowrap; }
 table.inst-t { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
 .inst-t th, .inst-t td { padding: 4px 4px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
 .inst-t th { color: var(--muted); font-weight: 500; font-size: 12px; }
@@ -229,6 +231,9 @@ table.t.full.ph { min-width: 620px; }
 .drill-head h3 { margin: 0; font-size: 16px; }
 
 .rise { color: var(--rise-x); } .fall { color: var(--fall-x); } .flat { color: var(--flat); }
+/* 小卡的底色比較深：漲跌字色往前景色靠一點，淺色主題的紅字才有 4.5:1 對比 */
+.tile .rise { color: color-mix(in srgb, var(--rise-x) 88%, var(--ink)); }
+.tile .fall { color: color-mix(in srgb, var(--fall-x) 88%, var(--ink)); }
 .tip {
   position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
@@ -325,6 +330,15 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
   .seg.hscroll .btn { flex: none; }
   .legend { min-height: 38px; align-content: flex-start; }   /* 兩行的高度（18 + 2 + 18） */
   .hl { padding: 1px 2px; }
+}
+/* 小手機（360px）：標題列四個按鈕排一行、指數漲跌那行平常不用換行 */
+@media (max-width: 400px) {
+  .links { gap: 4px; }
+  .links .btn { padding: 5px 6px; }
+}
+@media (max-width: 380px) {
+  .tile { padding: 8px; }
+  .tile .c { font-size: 11.5px; }
 }
 /* 手指操作：按鈕、勾選框做大一點 */
 @media (pointer: coarse) {
@@ -772,9 +786,10 @@ function renderMarket() {
       `<span class="rise">上漲 <b>${lots(up)}</b> 家<small>漲停 ${lots(lu)} 家</small></span>` +
       `<span class="flat">平盤 <b>${lots(flat)}</b> 家</span>` +
       `<span class="fall">下跌 <b>${lots(down)}</b> 家<small>跌停 ${lots(ld)} 家</small></span>`;
-    const pm = el("div", { class: "per-market" },
-      [[tse, "上市"], [otc, "上櫃"]].map(([m, n]) => `${n}：漲 ${lots(m.up)}・平 ${lots(m.flat)}・跌 ${lots(m.down)}`).join("　") +
-      (inc.length === 1 ? `（${inc[0][1] === "上市" ? "上櫃" : "上市"}的家數這次沒有讀到）` : ""));
+    // 每個市場一段，不會在「跌」和數字中間換行
+    const pm = el("div", { class: "per-market" });
+    for (const [m, n] of [[tse, "上市"], [otc, "上櫃"]]) pm.append(el("span", {}, `${n}：漲 ${lots(m.up)}・平 ${lots(m.flat)}・跌 ${lots(m.down)}`));
+    if (inc.length === 1) pm.append(el("span", {}, `（${inc[0][1] === "上市" ? "上櫃" : "上市"}的家數這次沒有讀到）`));
     b.append(bar, lg, pm);
   }
 
@@ -788,7 +803,7 @@ function renderMarket() {
   const it = ins.tse && typeof ins.tse === "object" ? ins.tse : null;
   const io = ins.otc && typeof ins.otc === "object" ? ins.otc : null;
   const h = el("h3", {}, `三大法人買賣超（${it && io ? "上市＋上櫃" : it ? "上市" : io ? "上櫃" : "上市＋上櫃"}）`);
-  h.append(el("span", { class: "hint" }, dShort(ins.date) + (isPhone() ? "・單位：億元" : "")));
+  h.append(el("span", { class: "hint" }, dShort(ins.date)));
   const KINDS = [["foreign", "外資"], ["trust", "投信"], ["dealer", "自營商"], ["total", "合計"]];
   // 只有一個市場有資料時，合計就是那個市場的數字（標題已經寫明）
   const tot = (k) => (it && io ? both(it[k], io[k]) : it ? (isNum(it[k]) ? it[k] : null) : io && isNum(io[k]) ? io[k] : null);
@@ -797,7 +812,7 @@ function renderMarket() {
     // 手機：小表格（合計｜上市｜上櫃），比四張小卡省一半高度
     const yi = (v) => (isNum(v) ? sgn(v) + fmt(v / 1e8, 2) : "—");
     const side2 = (m, k) => (m ? yi(m[k]) : "還沒公布");
-    let t = '<table class="inst-t"><thead><tr><th class="l"><span hidden>法人</span></th><th>合計</th><th>上市</th><th>上櫃</th></tr></thead><tbody>';
+    let t = '<table class="inst-t"><thead><tr><th class="l">單位：億元</th><th>合計</th><th>上市</th><th>上櫃</th></tr></thead><tbody>';
     for (const [k, label] of KINDS) {
       const v = tot(k);
       t += `<tr><td class="l">${label}</td><td class="key ${dir(v)}">${yi(v)}</td>` +
@@ -1852,7 +1867,9 @@ dlg.addEventListener("close", () => {
   seq++;   // 還在下載的歷史資料不用了
   clearTimeout(crossTimer);
   // 打開前的焦點元素（例如那一列的連結）在自動更新時被換掉了：改到新表格裡同一檔的連結，找不到就回到分頁籤
-  const lost = !document.activeElement || document.activeElement === document.body;
+  // （這時焦點可能還停在已經關掉的對話框裡，等一下瀏覽器才會把它移到 body）
+  const ae = document.activeElement;
+  const lost = !ae || ae === document.body || dlg.contains(ae);
   if (lost && opener && !opener.isConnected) {
     const a = code && $("tabPanel").querySelector(`[data-fid="${CSS.escape("row:" + code)}"]`);
     const t = a || $("tab-" + ui.tab);
