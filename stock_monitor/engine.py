@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -15,6 +15,7 @@ from .account import Account, TradeError
 from .signals import Alert, Snapshot, evaluate, snapshot
 
 ALERT_HISTORY_MAX = 1000
+FIRED_KEEP_DAYS = 14   # 已響過的提醒記錄保留幾天（以 K 棒日期計）
 
 
 def with_live_bar(df: pd.DataFrame, quote) -> pd.DataFrame:
@@ -57,19 +58,23 @@ class RefreshResult:
     notes: list = field(default_factory=list)       # 其他訊息（例如自動買進失敗）
     live: set = field(default_factory=set)          # 價格來自證交所即時報價的代號
     inactive: set = field(default_factory=set)      # 不在交易時間、這次不判斷訊號的代號
+    stale: dict = field(default_factory=dict)       # 交易時間內卻還沒有今天 K 棒的代號 → 最後 K 棒日期
     realtime_tried: bool = False                    # 這次有沒有向證交所查即時報價
     realtime_error: str | None = None               # 即時報價抓不到的原因
 
 
 class Monitor:
     def __init__(self, store, fetcher=default_fetcher, realtime=None, name_lookup=None,
-                 is_active=None):
+                 is_active=None, session_date=None):
         # realtime(items) → {項目: Quote}；預設用證交所即時報價，測試時可換成假的
         self._realtime = realtime
         # name_lookup(代號) → 股名；預設查證交所歷史資料標題裡的股名
         self._name_lookup = name_lookup
         # is_active(代號, 現在時間) → 這檔現在要不要判斷訊號、自動交易（雲端版只在交易時間內）
         self._is_active = is_active
+        # session_date(代號, 現在時間) → 該市場今天的日期 YYYY-MM-DD。有設定時，最後一根 K 棒
+        # 不是今天（休市日、資料還沒更新）就不判斷訊號，避免把前一天的交叉當成今天的再做一次
+        self._session_date = session_date
         self.realtime_error: str | None = None
         self.realtime_tried = False
         self.store = store
@@ -77,7 +82,10 @@ class Monitor:
         self.settings = store.settings()
         self.watchlist = store.watchlist()
         self.account = Account.from_dict(store.load("account.json", None))
-        self.alert_state = store.load("alerts.json", {"date": "", "fired": [], "history": []})
+        self.alert_state = store.load("alerts.json", {"fired": [], "history": []})
+        old_day = self.alert_state.pop("date", "")   # 舊版以「台北日期」去重，轉成新的格式
+        self.alert_state["fired"] = [k if k.count("|") >= 3 else f"{k}|{old_day}"
+                                     for k in self.alert_state.get("fired", [])]
         self.last_prices: dict = {}
         # 代號 → 股名（證交所即時報價或歷史資料提供），存檔起來，連不上證交所時也有股名
         self.names: dict = store.load("names.json", {})
@@ -132,15 +140,16 @@ class Monitor:
         self.watchlist[key] = {"lower": lower, "upper": upper}
         self.save()
 
-    # ---- 提醒去重：同一提醒一天只響一次 ----
-    def _fresh(self, alert: Alert, now: datetime) -> bool:
-        today = now.strftime("%Y-%m-%d")
-        if self.alert_state.get("date") != today:
-            self.alert_state["date"] = today
-            self.alert_state["fired"] = []
-        if alert.key in self.alert_state["fired"]:
+    # ---- 提醒去重：同一提醒在同一根 K 棒只響一次 ----
+    # 用 K 棒日期而不是台北日期：美股、加密貨幣的一根 K 棒會跨過台北午夜，不能午夜後又響一次
+    def _fresh(self, alert: Alert, now: datetime, bar_date: str | None = None) -> bool:
+        key = f"{alert.key}|{bar_date or now.strftime('%Y-%m-%d')}"
+        cutoff = (now - timedelta(days=FIRED_KEEP_DAYS)).strftime("%Y-%m-%d")
+        fired = [k for k in self.alert_state.get("fired", []) if k.rsplit("|", 1)[1] >= cutoff]
+        self.alert_state["fired"] = fired
+        if key in fired:
             return False
-        self.alert_state["fired"].append(alert.key)
+        fired.append(key)
         hist = self.alert_state.setdefault("history", [])
         hist.append({"time": now.strftime("%Y-%m-%d %H:%M:%S"),
                      "code": alert.code, "kind": alert.kind, "message": alert.message})
@@ -188,6 +197,7 @@ class Monitor:
         now = now or datetime.now()
         s = self.settings
         res = RefreshResult()
+        skipped: dict = {}   # 策略 → [(代號, 原因)]：這次無法判斷的
         quotes = self.realtime_quotes()
         res.realtime_error = self.realtime_error
         res.realtime_tried = self.realtime_tried
@@ -212,25 +222,42 @@ class Monitor:
                     found = None
                 if found:
                     self.names[name] = found
+            for key, why in snap.skipped.items():
+                skipped.setdefault(key, []).append((name, why))
             if self._is_active is not None and not self._is_active(name, now):
                 res.inactive.add(name)
                 continue
+            if self._session_date is not None:
+                today = self._session_date(name, now)
+                if today and (snap.date is None or snap.date < today):
+                    res.inactive.add(name)
+                    res.stale[name] = snap.date
+                    continue
             pos = self.account.positions.get(name)
             for alert in evaluate(snap, limits, pos, s["stop_loss_pct"]):
-                if not self._fresh(alert, now):
+                if not self._fresh(alert, now, snap.date):
                     continue
                 res.alerts.append(alert)
                 self.store.log("提醒 " + alert.message, now)
                 if s["auto_trade"]:
                     self._auto_trade(alert, snap, res, now)
+        for key, items in skipped.items():
+            st = strat.get(key)
+            main = "（主策略，這幾檔不會依訊號自動買賣）" if key == self.primary_strategy else ""
+            res.notes.append(f"【{st.name}】{main}這次無法判斷 "
+                             f"{'、'.join(n for n, _ in items)}：{items[0][1]}")
+        if res.stale:
+            res.notes.append("交易時間內還沒有今天的資料（休市日或資料延遲），先顯示最近一個交易日的"
+                             "價格、不判斷訊號：" + "、".join(
+                                 f"{n}（{d[5:].replace('-', '/') if d else '?'}）" for n, d in res.stale.items()))
         if res.realtime_tried:
             missing = [n for n in res.snapshots
-                       if uses_twse(parse_symbol(n)) and n not in res.live]
+                       if uses_twse(parse_symbol(n)) and n not in res.live and n not in res.stale]
             fallback = ("來自 Yahoo（約延遲 15 分鐘）" if s.get("source") == "yahoo"
                         else "是最近一天的收盤價")
             if self.realtime_error:
-                res.notes.append(f"證交所即時報價暫時抓不到（{self.realtime_error}），"
-                                 f"標 * 的台股價格{fallback}")
+                res.notes.append(f"證交所即時報價暫時抓不到（{self.realtime_error}）"
+                                 + (f"，標 * 的台股價格{fallback}" if missing else ""))
             elif missing:
                 res.notes.append(f"證交所即時報價沒有回傳 {'、'.join(missing)}，"
                                  f"標 * 的{fallback}")
@@ -254,6 +281,7 @@ class Monitor:
                     return
                 tw = parse_symbol(name).is_tw_stock
                 rec = self.account.buy(name, price, shares, tw, f"自動：{why_name}買進", now)
+                self._reset_stop(name)
             elif alert.kind in ("sell", "stop") and self.account.holds(name):
                 why = f"自動：{why_name}賣出" if alert.kind == "sell" else "自動：停損"
                 rec = self.account.sell(name, price, None, why, now)
@@ -267,6 +295,11 @@ class Monitor:
         self.store.log(f"模擬成交 {rec['side']} {name} {rec['shares']} 股 @ {rec['price']}"
                        f"（{rec['reason']}）", now)
 
+    def _reset_stop(self, name: str) -> None:
+        """新買進後，這檔的停損要能再觸發（停損提醒是跟著持股，不是跟著日期）。"""
+        self.alert_state["fired"] = [k for k in self.alert_state.get("fired", [])
+                                     if not k.startswith(f"{name}|stop|")]
+
     # ---- 手動交易 ----
     def manual_buy(self, name: str, shares: int, price: float | None = None) -> dict:
         key = self.normalize(name)
@@ -276,6 +309,7 @@ class Monitor:
         if not price:
             raise TradeError("還沒有這檔的報價，請先更新一次或指定價格")
         rec = self.account.buy(key, price, shares, parse_symbol(key).is_tw_stock)
+        self._reset_stop(key)
         self.store.log(f"模擬成交 買進 {key} {shares} 股 @ {price}（手動）")
         self.save()
         return rec

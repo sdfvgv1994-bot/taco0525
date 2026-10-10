@@ -57,6 +57,7 @@ h1 { font-size: 20px; margin: 0; font-weight: 650; }
 }
 .btn:hover { background: var(--surface-2); }
 .banner { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.banner.error { border: 1px solid currentColor; }
 .banner ul { margin: 4px 0 0; padding-left: 20px; }
 .notes { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; padding-left: 18px; }
 section.panel {
@@ -231,6 +232,7 @@ function render() {
   $("editBtn").href = $("editBtn2").href = data.edit_url;
   // 設定錯誤
   const b = $("banner"); b.replaceChildren();
+  if (data.run_error) b.append(el("div", { class: "banner error" }, "⚠ " + data.run_error));
   if (data.config_errors.length) {
     const box = el("div", { class: "banner" }, "⚠ 設定檔有問題：");
     const ul = el("ul");
@@ -261,7 +263,9 @@ function render() {
     for (const p of data.positions) {
       const r = el("tr");
       r.append(el("td", {}, `${p.code} ${p.name}`), el("td", {}, fmt(p.shares, 0)), el("td", {}, fmt(p.avg_cost)),
-               el("td", {}, fmt(p.price)), el("td", { class: dirClass(p.pnl) }, money(p.pnl)),
+               el("td", p.price_time ? { title: `這次抓不到報價，用 ${p.price_time} 的價格` } : {},
+                  fmt(p.price) + (p.price_time ? " ⚠" : "")),
+               el("td", { class: dirClass(p.pnl) }, money(p.pnl)),
                el("td", { class: dirClass(p.pnl_pct) }, pct(p.pnl_pct)));
       t.append(r);
     }
@@ -269,7 +273,8 @@ function render() {
   }
 
   // 自選股
-  $("watch").replaceChildren(...data.watch.map(watchCard));
+  if (!data.watch.length) $("watch").replaceChildren(el("div", { class: "empty" }, "自選股是空的，按「⚙️ 修改設定」加入"));
+  else $("watch").replaceChildren(...data.watch.map(watchCard));
 
   // 提醒
   const al = $("alerts"); al.replaceChildren();
@@ -319,7 +324,9 @@ function watchCard(w) {
   const star = w.tw && !w.live ? " *" : "";
   c.append(el("div", { class: "price" }, fmt(w.price) + star));
   c.append(el("div", { class: dirClass(w.change_pct) }, pct(w.change_pct)));
-  c.append(el("div", { class: "meta" }, `MA${data.settings.short_ma} ${fmt(w.short_ma)}　MA${data.settings.long_ma} ${fmt(w.long_ma)}　RSI ${fmt(w.rsi, 0)}　${w.trend === "多" ? "多頭" : "空頭"}`));
+  const trend = w.trend === "多" ? "多頭" : w.trend === "空" ? "空頭" : "資料不足";
+  c.append(el("div", { class: "meta" }, `MA${data.settings.short_ma} ${fmt(w.short_ma)}　MA${data.settings.long_ma} ${fmt(w.long_ma)}　RSI ${fmt(w.rsi, 0)}　${trend}`));
+  if (w.stale && w.bar_date) c.append(el("div", { class: "meta" }, `⚠ 還沒有今天的資料，顯示 ${w.bar_date.slice(5).replace("-", "/")} 的收盤`));
   const chips = el("div", { class: "chips" });
   for (const sg of w.signals) chips.append(el("span", { class: "chip " + (sg.dir > 0 ? "buy" : "sell"), title: sg.reason }, `${sg.dir > 0 ? "買" : "賣"}・${sg.name}`));
   if (w.held) chips.append(el("span", { class: "chip" }, w.held_only ? "持股中（已移出自選股）" : "持股中"));
@@ -328,7 +335,9 @@ function watchCard(w) {
   if (chips.childNodes.length) c.append(chips);
   const st = exStatus(w.exchange);
   const p = el("span", { class: "pill" + (st === "open" ? " open" : "") });
-  p.append(el("span", { class: "dot" }), document.createTextNode(`${(data.exchanges[w.exchange] || {}).name || ""} ${st === "open" ? "交易中" : "休市"}`));
+  const exName = (data.exchanges[w.exchange] || {}).name;
+  p.append(el("span", { class: "dot" }), document.createTextNode(
+    !exName ? "不知道交易時間，只顯示報價" : `${exName} ${st === "open" ? "交易時間" : "休市"}`));
   c.append(p);
   return c;
 }
@@ -376,7 +385,9 @@ async function load() {
   try {
     const r = await fetch(`data.json?t=${Date.now()}`, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status === 404 ? "雲端看盤還沒產生資料，請等下一次更新" : `讀取失敗（${r.status}）`);
-    data = await r.json();
+    const got = await r.json();
+    if (got.fatal) throw new Error(got.fatal);   // 雲端這次失敗、也沒有上一次的資料
+    data = got;
     lastError = null;
     render();
   } catch (e) {

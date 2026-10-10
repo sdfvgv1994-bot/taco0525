@@ -59,14 +59,22 @@ jobs:
         run: python world_market/build_static.py --out _site
 
       # ---------------- 雲端看盤（出錯也不影響全球看板發佈） ----------------
+      # 分支不存在（第一次執行）才建新的；網路等其他錯誤就讓這一步失敗，不要從空帳戶重來
       - name: 取出雲端看盤的資料（monitor-data 分支）
         id: state
         continue-on-error: true
         run: |
-          if git fetch --depth=1 origin monitor-data:monitor-data; then
+          rc=0
+          git ls-remote --exit-code --heads origin monitor-data > /dev/null || rc=$?
+          if [ "$rc" = 0 ]; then
+            git fetch --depth=1 origin monitor-data:monitor-data
             git worktree add _state monitor-data
-          else
+          elif [ "$rc" = 2 ]; then
+            echo "第一次執行：建立新的 monitor-data 分支"
             git worktree add --orphan -b monitor-data _state
+          else
+            echo "::error::查詢 monitor-data 分支失敗（代碼 $rc），這次不執行雲端看盤"
+            exit 1
           fi
 
       - name: 雲端看盤
@@ -79,8 +87,10 @@ jobs:
           NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
         run: python cloud_monitor/run.py --state _state --out _site/monitor
 
+      # 看盤程式中途出錯也要存：出錯前可能已經成交，沒存的話下一次會再做一次
       - name: 存回雲端看盤的資料
-        if: steps.monitor.outcome == 'success'
+        id: save
+        if: steps.state.outcome == 'success'
         continue-on-error: true
         working-directory: _state
         run: |
@@ -89,6 +99,15 @@ jobs:
           git add -A
           git diff --cached --quiet || git commit -q -m "雲端看盤 $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')"
           git push -q origin monitor-data
+
+      # 讀不到帳戶、程式出錯或存檔失敗：改放上一次的網頁（標示這次失敗），/monitor/ 不會變成 404
+      - name: 雲端看盤沒成功時，保留上一次的網頁
+        if: steps.monitor.outcome != 'success' || steps.save.outcome != 'success'
+        continue-on-error: true
+        run: >-
+          python cloud_monitor/keep_last.py --out _site/monitor
+          --state "${{ steps.state.outcome }}" --monitor "${{ steps.monitor.outcome }}"
+          --save "${{ steps.save.outcome }}"
 
       - uses: actions/upload-pages-artifact@v3
         with:

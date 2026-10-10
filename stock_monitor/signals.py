@@ -31,6 +31,8 @@ class Snapshot:
     rsi: float
     signals: dict = field(default_factory=dict)   # 策略代號 → 今天的訊號 +1 / -1 / 0
     reasons: dict = field(default_factory=dict)   # 策略代號 → (買進理由, 賣出理由)
+    date: str | None = None                       # 最後一根 K 棒的日期（YYYY-MM-DD）
+    skipped: dict = field(default_factory=dict)   # 策略代號 → 這次無法判斷的原因
 
     @property
     def change_pct(self) -> float:
@@ -62,20 +64,23 @@ def snapshot(code: str, df: pd.DataFrame, price: float | None, settings: dict) -
         df.loc[last, "Low"] = min(df.loc[last, "Low"], price)
     closes = df["Close"]
 
-    signals, reasons = {}, {}
+    signals, reasons, skipped = {}, {}, {}
     for key in settings.get("strategies", ["ma"]):
         st = strat.get(key)
         try:
             out = st.run(df, **strategy_params(settings, key))
-        except ValueError:
-            continue  # 資料不夠這個策略用，就不判斷
+        except Exception as e:  # noqa: BLE001 - 資料不夠或參數不對：這個策略不判斷，其他照常
+            skipped[key] = str(e)
+            continue
         signals[key] = int(out.signal.iloc[-1])
         reasons[key] = (out.buy_reason, out.sell_reason)
 
+    last = df.index[-1]
+    date = last.strftime("%Y-%m-%d") if hasattr(last, "strftime") else None
     return Snapshot(code, float(closes.iloc[-1]), float(closes.iloc[-2]),
                     float(sma(closes, settings["short_ma"]).iloc[-1]),
                     float(sma(closes, settings["long_ma"]).iloc[-1]),
-                    float(rsi(closes).iloc[-1]), signals, reasons)
+                    float(rsi(closes).iloc[-1]), signals, reasons, date, skipped)
 
 
 def evaluate(snap: Snapshot, limits: dict, position: dict | None,

@@ -33,12 +33,19 @@ long_ma = 5
 
 
 class Feed:
+    """假行情：最後一根 K 棒預設是執行當天（台北日期），end 可指定別的日期（模擬資料還沒更新）。"""
     def __init__(self):
         self.data = {}
+        self.end = {}
+        self.calls = []
 
     def __call__(self, name, settings, now, quotes):
+        self.calls.append(name)
+        if isinstance(self.data.get(name), Exception):
+            raise self.data[name]
         closes = self.data.get(name, [100.0] * 30)
-        c = pd.Series(closes, dtype=float, index=pd.bdate_range(end="2026-10-08", periods=len(closes)))
+        end = self.end.get(name, now.date())
+        c = pd.Series(closes, dtype=float, index=pd.bdate_range(end=end, periods=len(closes)))
         df = pd.DataFrame({"Open": c, "High": c, "Low": c, "Close": c, "Volume": 0})
         return name, df, float(closes[-1])
 
@@ -279,3 +286,202 @@ signals = "some"
 '''))
     assert cfg["notify"]["enabled"] is True and cfg["notify"]["signals"] == "primary"
     assert any("enabled" in w for w in warnings) and any("signals" in w for w in warnings)
+
+
+# ---------- 審查找到的問題 ----------
+def strict_json(path):
+    """瀏覽器的 JSON.parse 不接受 NaN / Infinity。"""
+    return json.loads(path.read_text(encoding="utf-8"),
+                      parse_constant=lambda c: pytest.fail(f"data.json 裡有 {c}，網頁會打不開"))
+
+
+def test_holiday_or_stale_bar_does_not_trade(tmp_path):
+    """時鐘上是交易時間、但還沒有今天的 K 棒（國定假日、Yahoo 延遲）：不能把昨天的交叉再做一次。"""
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    feed.end = {"2330": "2026-10-08"}
+    holiday = datetime(2026, 10, 9, 10, 0)            # 週五國慶補假
+    data = run_once(tmp_path, write_config(tmp_path / "c.toml", BASE), feed, holiday)
+    assert not data["trades"] and not data["alerts"]
+    w = {x["code"]: x for x in data["watch"]}
+    assert w["2330"]["stale"] is True and w["2330"]["bar_date"] == "2026-10-08"
+    assert w["2330"]["price"] == 20                   # 報價照樣顯示
+    assert any("還沒有今天的資料" in n and "2330（10/08）" in n for n in data["notes"])
+
+
+def test_flaky_realtime_does_not_rebuy_at_yesterdays_price(tmp_path):
+    cfg = write_config(tmp_path / "c.toml", BASE)
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    run_once(tmp_path, cfg, feed, TW_OPEN)                              # 週四：黃金交叉買進
+    feed.data = {"2330": DEATH}
+    run_once(tmp_path, cfg, feed, datetime(2026, 10, 9, 9, 0))          # 週五 9:00 有即時價：死亡交叉賣出
+    feed.data, feed.end = {"2330": GOLDEN}, {"2330": "2026-10-08"}      # 9:15 即時報價斷線、Yahoo 還是昨天
+    data = run_once(tmp_path, cfg, feed, datetime(2026, 10, 9, 9, 15))
+    assert [t["side"] for t in reversed(data["trades"])] == ["買進", "賣出"]
+
+
+def test_us_alert_not_repeated_after_taipei_midnight(tmp_path):
+    """美股一根 K 棒跨過台北午夜：午夜後不能再響一次，停損賣出後也不能用同一個訊號再買回來。"""
+    cfg = write_config(tmp_path / "c.toml", BASE.replace("stop_loss_pct = 0", "stop_loss_pct = 8"))
+    feed = Feed()
+    feed.end = {"AAPL": "2026-10-08"}                                   # 紐約還是 10/08
+    feed.data = {"AAPL": GOLDEN}
+    data = run_once(tmp_path, cfg, feed, datetime(2026, 10, 8, 22, 0))
+    assert [t["side"] for t in data["trades"]] == ["買進"]
+    feed.data = {"AAPL": GOLDEN[:-1] + [18]}                            # 跌 10%：停損
+    data = run_once(tmp_path, cfg, feed, datetime(2026, 10, 8, 23, 45))
+    assert data["trades"][0]["reason"] == "自動：停損"
+    feed.data = {"AAPL": GOLDEN}
+    data = run_once(tmp_path, cfg, feed, datetime(2026, 10, 9, 0, 15))  # 台北過午夜，紐約同一天
+    assert data["new_alerts"] == 0 and len(data["trades"]) == 2
+
+
+def test_exchange_of_foreign_suffixes_and_unknown(tmp_path):
+    codes = ("7203.T", "0700.HK", "005930.KS", "600519.SS", "BRK-B", "VOD.L", "^HSCE", "ABC.XYZ")
+    assert [cm.exchange_of(x) for x in codes] == ["JP", "HK", "KR", "CN", "US", "UK", None, None]
+    assert cm.is_active("7203.T", datetime(2026, 10, 8, 9, 0))          # 台北 9:00 = 東京 10:00
+    assert not cm.is_active("7203.T", datetime(2026, 10, 8, 22, 0))
+    assert not cm.is_active("^HSCE", TW_OPEN) and cm.session_date("^HSCE", TW_OPEN) is None
+    assert cm.session_date("AAPL", datetime(2026, 10, 9, 0, 15)) == "2026-10-08"
+    _, warnings = cm.load_config(write_config(tmp_path / "c.toml", 'watchlist = ["2330", "^HSCE"]\n'))
+    assert any("^HSCE" in w and "不知道" in w for w in warnings)
+
+
+def test_bad_strategy_params_are_reported(tmp_path):
+    cfg, warnings = cm.load_config(write_config(tmp_path / "c.toml", BASE + '''
+[strategy_params]
+ma = { short = 30 }
+rsi = { n = 0 }
+macd = { fast = 30 }
+kd = { low = "20" }
+breakout = { entry = 400 }
+bbands = { n = 10 }
+'''))
+    assert cfg["strategy_params"] == {"kd": {}, "bbands": {"n": 10.0}}
+    text = "\n".join(warnings)
+    assert "均線交叉 的參數不能用" in text and "短均線天數必須小於長均線" in text
+    assert "RSI 超買超賣 的參數不能用（n 要在 1～240 之間）" in text
+    assert "MACD 的參數不能用" in text and "KD 指標 的 low 要填數字" in text
+    assert "突破新高 的參數不能用" in text
+    _, warnings = cm.load_config(write_config(tmp_path / "d.toml", BASE.replace("long_ma = 5", "long_ma = 300")))
+    assert any("long_ma 要填 2～240" in w for w in warnings)
+
+
+def test_short_history_gives_valid_json_and_note(tmp_path):
+    feed = Feed()
+    feed.data = {"2330": [10, 11, 12, 13]}                              # 剛上市：比長均線天數還少
+    data = run_once(tmp_path, write_config(tmp_path / "c.toml", BASE), feed, TW_OPEN)
+    saved = strict_json(tmp_path / "site" / "data.json")
+    w = {x["code"]: x for x in saved["watch"]}
+    assert w["2330"]["long_ma"] is None and w["2330"]["trend"] is None and w["2330"]["price"] == 13
+    assert any("均線交叉" in n and "無法判斷 2330" in n for n in data["notes"])
+
+
+def test_failed_quote_uses_last_price_and_skips_equity_point(tmp_path):
+    cfg = write_config(tmp_path / "c.toml", BASE)
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    first = run_once(tmp_path, cfg, feed, TW_OPEN)
+    feed.data = {"2330": RuntimeError("Yahoo 限流")}
+    data = run_once(tmp_path, cfg, feed, datetime(2026, 10, 8, 10, 15))
+    [p] = data["positions"]
+    assert p["price"] == 20 and p["price_time"] == "2026-10-08 10:00"
+    assert data["account"]["total"] == first["account"]["total"]        # 不會被當成成本價
+    assert len(data["equity"]) == 1 and any("抓不到報價" in n for n in data["notes"])
+
+
+def test_typos_and_misplaced_keys_are_explained(tmp_path):
+    cfg, warnings = cm.load_config(write_config(tmp_path / "c.toml", '''
+Watchlist = ["2330"]
+[settings]
+autotrade = false
+stop_loss = 5
+[limits]
+"TSLA" = { upper = 400 }
+"2330" = { low = 900 }
+[strategy_params]
+rsi = { low = 25 }
+short_ma = 10
+'''))
+    text = "\n".join(warnings)
+    assert cfg["settings"]["auto_trade"] is False                       # 打錯字：為了安全先關閉
+    for part in ("是不是要寫「watchlist」", "是不是要寫「auto_trade」", "是不是要寫「stop_loss_pct」",
+                 "「short_ma」寫在[strategy_params] 裡了，要搬到 [settings] 底下",
+                 "「TSLA」有設上下限，但不在自選股裡", "是不是要寫「lower」", "沒有設定自選股"):
+        assert part in text
+    cfg, warnings = cm.load_config(write_config(tmp_path / "d.toml",
+                                                'watchlist = ["2330"]\n[Settings]\nauto_trade = true\n'))
+    assert cfg["settings"]["auto_trade"] is False and any("是不是要寫「settings」" in w for w in warnings)
+    cfg, warnings = cm.load_config(write_config(tmp_path / "e.toml", BASE.replace("auto_trade = true\n", "")))
+    assert "auto_trade" not in cfg["settings"] and not warnings          # [notify] 的 trades 不算打錯字
+
+
+def test_wrong_types_do_not_crash(tmp_path):
+    cfg, warnings = cm.load_config(write_config(tmp_path / "c.toml", '''
+watchlist = ["2330"]
+limits = ["2330"]
+strategy_params = "rsi"
+notify = 3
+'''))
+    assert cfg["watchlist"] == ["2330"] and cfg["limits"] == {} and cfg["strategy_params"] == {}
+    text = "\n".join(warnings)
+    assert "[limits] 的格式不對" in text and "[strategy_params] 的格式不對" in text and "[notify] 的格式不對" in text
+
+
+def test_fullwidth_bom_and_percent_are_fixed(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('﻿# 註解裡的全形，不用管\nwatchlist = [“2330”，“AAPL”]\n[settings]\n'
+                 'stop_loss_pct = ８%\nauto_trade　= false\n', encoding="utf-8")
+    cfg, warnings = cm.load_config(p)
+    assert cfg["watchlist"] == ["2330", "AAPL"]
+    assert cfg["settings"]["stop_loss_pct"] == 8 and cfg["settings"]["auto_trade"] is False
+    lines = [w.split(" 行")[0] for w in warnings]
+    assert lines == ["第 2", "第 4", "第 5"]                             # 註解那行不算
+
+
+def test_syntax_error_is_explained_in_chinese(tmp_path):
+    with pytest.raises(cm.ConfigError) as e:
+        cm.load_config(write_config(tmp_path / "c.toml", 'watchlist = ["2330"]\n[settings]\nstop_loss_pct = 8 趴\n'))
+    msg = str(e.value)
+    assert "第 3 行「stop_loss_pct = 8 趴」" in msg and "一行只能寫一個設定" in msg
+
+
+def test_broken_config_on_first_run_does_not_auto_trade(tmp_path):
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    broken = write_config(tmp_path / "bad.toml", 'watchlist = ["2330"\n[settings')
+    data = run_once(tmp_path, broken, feed, TW_OPEN)
+    assert not data["trades"] and data["settings"]["auto_trade"] is False
+    assert "還沒有上一次正確的設定" in data["config_errors"][0]
+    assert "沿用上一次正確的設定；" not in data["config_errors"][0]
+
+
+def test_keep_last_republishes_previous_page(tmp_path):
+    from cloud_monitor import keep_last as kl
+    assert kl.LIVE_DATA == notify.MONITOR_URL + "data.json"
+    prev = {"updated": "2026-10-08 10:00:00", "watch": [], "run_error": "上一次的錯誤"}
+    data = kl.keep_last(tmp_path / "out", kl.reason_for("success", "failure", "success"),
+                        get=lambda url: dict(prev), log=lambda *_: None)
+    assert (tmp_path / "out" / "index.html").exists()
+    assert "程式這次執行失敗" in data["run_error"] and "10-08 10:00" in data["run_error"]
+    assert strict_json(tmp_path / "out" / "data.json") == data
+
+    def offline(url):
+        raise OSError("HTTP 404")
+    data = kl.keep_last(tmp_path / "out", kl.reason_for("failure", "skipped", "skipped"),
+                        get=offline, log=lambda *_: None)
+    assert "讀不到帳戶資料" in data["fatal"] and "404" in data["fatal"]
+    assert "存檔失敗" in kl.reason_for("success", "success", "failure")
+
+
+def test_workflow_keeps_last_page_and_detects_missing_branch():
+    yaml = pytest.importorskip("yaml")
+    wf = yaml.safe_load((Path(cm.ROOT) / ".github/workflows/board.yml").read_text(encoding="utf-8"))
+    steps = {s.get("id") or s.get("name"): s for s in wf["jobs"]["build"]["steps"]}
+    assert "--exit-code" in steps["state"]["run"] and '"$rc" = 2' in steps["state"]["run"]
+    assert steps["save"]["if"] == "steps.state.outcome == 'success'"
+    keep = steps["雲端看盤沒成功時，保留上一次的網頁"]
+    assert "keep_last.py" in keep["run"] and "steps.save.outcome != 'success'" in keep["if"]
+    names = [s.get("id") or s.get("name") or s.get("uses") for s in wf["jobs"]["build"]["steps"]]
+    assert names.index("雲端看盤沒成功時，保留上一次的網頁") < names.index("actions/upload-pages-artifact@v3")

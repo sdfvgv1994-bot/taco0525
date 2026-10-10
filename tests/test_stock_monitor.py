@@ -277,3 +277,45 @@ def test_set_strategies_validation(tmp_path):
     with pytest.raises(ValueError):
         m.set_strategies([])
     assert Monitor(Store(tmp_path)).settings["strategies"] == ["kd", "rsi"]
+
+
+def test_old_alert_state_is_migrated(tmp_path):
+    Store(tmp_path).save("alerts.json", {"date": "2026-10-08", "fired": ["2330|buy|ma"], "history": []})
+    m, feed = make_monitor(tmp_path)
+    m.add("2330")
+    feed.data["2330"] = (GOLDEN, 20)
+    assert m.refresh(NOW).alerts == []                     # 舊格式記錄的「今天已響過」照樣有效
+
+
+def test_alert_dedupe_follows_bar_date(tmp_path):
+    m, _ = make_monitor(tmp_path)
+    m.add("AAPL")
+    df = _df(GOLDEN)
+    df.index = pd.bdate_range(end="2026-10-08", periods=len(df))
+    m.fetcher = lambda name, s, now, q: (name, df, 20.0)
+    assert [a.kind for a in m.refresh(NOW).alerts] == ["buy"]
+    assert m.refresh(NOW + timedelta(hours=15)).alerts == []   # 台北過了午夜，還是同一根 K 棒
+
+
+def test_stop_loss_can_fire_again_after_rebuy(tmp_path):
+    m, feed = make_monitor(tmp_path, auto_trade=True)
+    m.add("2330")
+    m.last_prices["2330"] = 100
+    m.manual_buy("2330", 100)
+    feed.data["2330"] = ([100] * 30, 85)
+    assert any(t["reason"] == "自動：停損" for t in m.refresh(NOW).trades)
+    m.manual_buy("2330", 100, price=100)                   # 同一天再買回來
+    res = m.refresh(NOW + timedelta(minutes=15))
+    assert any(t["reason"] == "自動：停損" for t in res.trades)   # 新的持股照樣會停損
+
+
+def test_session_date_skips_stale_bars(tmp_path):
+    m = Monitor(Store(tmp_path), fetcher=lambda n, s, now, q: (n, dated, 20.0), realtime=lambda items: {},
+                session_date=lambda name, now: "2026-10-09")
+    m.settings.update(short_ma=2, long_ma=5)
+    dated = _df(GOLDEN)
+    dated.index = pd.bdate_range(end="2026-10-08", periods=len(dated))
+    m.add("2330")
+    res = m.refresh(datetime(2026, 10, 9, 10, 0))
+    assert res.alerts == [] and res.stale == {"2330": "2026-10-08"} and "2330" in res.snapshots
+    assert any("還沒有今天的資料" in n for n in res.notes)
