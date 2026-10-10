@@ -1,0 +1,188 @@
+{
+ "requests": 16,
+ "last_ts": 1791632460.1988528,
+ "blocked_hosts": {
+  "openapi.twse.com.tw": "A1: HTTP 200 html",
+  "www.twse.com.tw": "B3: HTTP 307 html"
+ },
+ "results": {
+  "A1": {
+   "url": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+   "status": 200,
+   "content_type": "text/html; charset=UTF-8",
+   "size": 800,
+   "kind": "html",
+   "location": null,
+   "file": "A1.html.gz",
+   "blocked_host": true
+  },
+  "A2": {
+   "url": "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
+   "skipped": "host blocked: A1: HTTP 200 html"
+  },
+  "A3": {
+   "url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+   "skipped": "host blocked: A1: HTTP 200 html"
+  },
+  "A4": {
+   "url": "https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX",
+   "skipped": "host blocked: A1: HTTP 200 html"
+  },
+  "B1": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261008&type=ALLBUT0999&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 247290,
+   "kind": "json",
+   "location": null,
+   "file": "B1.json.gz"
+  },
+  "B2": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260601&type=ALLBUT0999&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 246925,
+   "kind": "json",
+   "location": null,
+   "file": "B2.json.gz"
+  },
+  "B3": {
+   "url": "https://www.twse.com.tw/rwd/zh/fund/T86?date=20261008&selectType=ALLBUT0999&response=json",
+   "status": 307,
+   "content_type": "text/html; charset=UTF-8",
+   "size": 800,
+   "kind": "html",
+   "location": null,
+   "file": "B3.html.gz",
+   "blocked_host": true
+  },
+  "B4": {
+   "url": "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date=20261008&selectType=ALL&response=json",
+   "skipped": "host blocked: B3: HTTP 307 html"
+  },
+  "B5": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?date=20261008&selectType=ALL&response=json",
+   "skipped": "host blocked: B3: HTTP 307 html"
+  },
+  "B6": {
+   "url": "https://www.twse.com.tw/rwd/zh/fund/BFI82U?type=day&dayDate=20261008&response=json",
+   "skipped": "host blocked: B3: HTTP 307 html"
+  },
+  "B7": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20261009&type=ALLBUT0999&response=json",
+   "skipped": "host blocked: B3: HTTP 307 html"
+  },
+  "B8": {
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=20261001&response=json",
+   "skipped": "host blocked: B3: HTTP 307 html"
+  },
+  "C1": {
+   "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 4782391,
+   "kind": "json",
+   "location": null,
+   "file": "C1.json.gz"
+  },
+  "C2": {
+   "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 155978,
+   "kind": "json",
+   "location": null,
+   "file": "C2.json.gz"
+  },
+  "C3": {
+   "url": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 844241,
+   "kind": "json",
+   "location": null,
+   "file": "C3.json.gz"
+  },
+  "C4": {
+   "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 550896,
+   "kind": "json",
+   "location": null,
+   "file": "C4.json.gz"
+  },
+  "C5": {
+   "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+   "status": 200,
+   "content_type": "application/json",
+   "size": 1074408,
+   "kind": "json",
+   "location": null,
+   "file": "C5.json.gz"
+  },
+  "D1": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026%2F10%2F08&id=&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 1841812,
+   "kind": "json",
+   "location": null,
+   "file": "D1.json.gz"
+  },
+  "D2": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026%2F06%2F01&id=&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 1577157,
+   "kind": "json",
+   "location": null,
+   "file": "D2.json.gz"
+  },
+  "D3": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date=2026%2F10%2F08&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 143385,
+   "kind": "json",
+   "location": null,
+   "file": "D3.json.gz"
+  },
+  "D4": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/margin/balance?date=2026%2F10%2F08&id=&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 107561,
+   "kind": "json",
+   "location": null,
+   "file": "D4.json.gz"
+  },
+  "D5": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/afterTrading/peQryDate?date=2026%2F10%2F08&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 69968,
+   "kind": "json",
+   "location": null,
+   "file": "D5.json.gz"
+  },
+  "D6": {
+   "url": "https://www.tpex.org.tw/www/zh-tw/indexInfo/inx?date=2026%2F10%2F08&response=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 559,
+   "kind": "json",
+   "location": null,
+   "file": "D6.json.gz"
+  },
+  "D7": {
+   "url": "https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d=115/10/08&o=json",
+   "status": 200,
+   "content_type": "application/json;charset=UTF-8",
+   "size": 1841812,
+   "kind": "json",
+   "location": null,
+   "file": "D7.json.gz"
+  }
+ }
+}
