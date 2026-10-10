@@ -107,6 +107,22 @@ def build(out: Path, service: DataService | None = None, log=print,
     if written < len(ALL_ITEMS) * MIN_OK_RATIO:
         raise SystemExit(f"歷史資料太少（{written}/{len(ALL_ITEMS)}），這次不更新網頁")
 
+    # 財經新聞：某一類抓不到時沿用上一次成功的
+    news_cache = history_cache / "news.json" if history_cache and not svc.demo else None
+    previous = None
+    if news_cache and news_cache.exists():
+        try:
+            previous = json.loads(news_cache.read_text(encoding="utf-8"))
+        except ValueError:
+            previous = None
+    from world_market import news as nw
+    news = nw.merge_with_previous(svc.news(force=True), previous)
+    _dump(out / "data" / "news.json", news)
+    if news_cache and any(c["items"] and not c.get("stale") for c in news["categories"]):
+        _dump(news_cache, news)
+    log("新聞：" + "、".join(f"{c['name']} {len(c['items'])} 則" + ("（沿用上次）" if c.get("stale") else "")
+                           for c in news["categories"]))
+
     _dump(out / "data" / "overview.json", {**ov, "static": True, "history_period": HISTORY_PERIOD})
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     marker = '<script>\n"use strict";'

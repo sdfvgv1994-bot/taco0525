@@ -96,6 +96,18 @@ section.panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
 .rank .val { fill: var(--ink); font-variant-numeric: tabular-nums; }
 .rank .zero { stroke: var(--axis); }
 
+/* 財經新聞 */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.news { list-style: none; margin: 0; padding: 0; }
+.news li { border-bottom: 1px solid var(--grid); }
+.news li:last-child { border-bottom: 0; }
+.news a { display: block; padding: 9px 2px; color: var(--ink); text-decoration: none; }
+.news a:hover .nt { text-decoration: underline; }
+.news .nt { font-weight: 550; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.news .nm { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.news .empty { color: var(--muted); padding: 12px 0; }
+.more { margin-top: 6px; }
+
 .group h2 { font-size: 16px; margin: 20px 0 8px; font-weight: 650; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .card {
@@ -177,6 +189,14 @@ th:first-child, td:first-child { text-align: left; }
     <h2>今日股市漲跌排行</h2>
     <div class="sub">各國股價指數今天的漲跌幅（最新價對比前一個交易日收盤）</div>
     <div class="rank" id="rank"></div>
+  </section>
+
+  <section class="panel" id="newsPanel">
+    <h2>財經新聞</h2>
+    <div class="sub" id="newsSub">來源：Google 新聞（彙整鉅亨網、經濟日報、工商時報、中央社等）</div>
+    <div class="tabs" id="newsTabs" role="tablist" aria-label="新聞分類"></div>
+    <ul class="news" id="newsList"><li class="empty">載入中…</li></ul>
+    <button class="btn more" id="newsMore" hidden>顯示更多</button>
   </section>
 
   <div id="groups"><div class="loading">正在載入資料…（第一次向證交所下載資料約需 40 秒，之後幾乎是瞬間）</div></div>
@@ -429,6 +449,7 @@ function renderGroups() {
     sec.append(grid); box.append(sec);
   }
   $("rankPanel").hidden = !(filter === "全部" || INDEX_GROUPS.includes(filter));
+  $("newsPanel").hidden = filter !== "全部";
 }
 
 // ---------- 詳細走勢 ----------
@@ -590,6 +611,51 @@ $("tableBtn").onclick = () => {
   $("tableWrap").style.display = on ? "block" : "none";
 };
 
+// ---------- 財經新聞 ----------
+let news = null, newsTab = pref("newsTab") || "tw", newsAll = false;
+function ago(iso) {
+  if (!iso) return "";
+  const mins = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+  if (mins < 60) return `${mins || 1} 分鐘前`;
+  if (mins < 24 * 60) return `${Math.floor(mins / 60)} 小時前`;
+  return new Date(iso).toLocaleDateString("zh-TW", { timeZone: "Asia/Taipei", month: "numeric", day: "numeric" });
+}
+function renderNews() {
+  if (!news) return;
+  if (!news.categories.some((c) => c.key === newsTab)) newsTab = news.categories[0].key;
+  const tabs = $("newsTabs"); tabs.replaceChildren();
+  for (const c of news.categories) {
+    const b = el("button", { class: "btn", role: "tab", "aria-pressed": String(c.key === newsTab),
+                             "aria-selected": String(c.key === newsTab) }, c.name);
+    b.onclick = () => { newsTab = c.key; newsAll = false; pref("newsTab", c.key); renderNews(); };
+    tabs.append(b);
+  }
+  const cat = news.categories.find((c) => c.key === newsTab);
+  const list = $("newsList"); list.replaceChildren();
+  const items = newsAll ? cat.items : cat.items.slice(0, 8);
+  if (!cat.items.length) list.append(el("li", { class: "empty" }, cat.error ? `⚠ 暫時抓不到新聞（${cat.error}）` : "目前沒有新聞"));
+  for (const it of items) {
+    const a = el("a", { href: it.link, target: "_blank", rel: "noopener noreferrer" });
+    a.append(el("div", { class: "nt" }, it.title),
+             el("div", { class: "nm" }, [it.source, ago(it.published_utc)].filter(Boolean).join(" · ")));
+    const li = el("li"); li.append(a); list.append(li);
+  }
+  $("newsMore").hidden = newsAll || cat.items.length <= 8;
+  $("newsSub").textContent = "來源：Google 新聞（彙整鉅亨網、經濟日報、工商時報、中央社等）" +
+    (cat.stale ? "　⚠ 這一類暫時抓不到，先顯示上一次的新聞" : "");
+}
+$("newsMore").onclick = () => { newsAll = true; renderNews(); };
+async function loadNews() {
+  try {
+    const r = await fetch(STATIC ? `data/news.json?t=${Date.now()}` : "/api/news", { cache: "no-store" });
+    if (!r.ok) throw new Error(`讀取失敗（${r.status}）`);
+    news = await r.json();
+    renderNews();
+  } catch (e) {
+    if (!news) $("newsList").replaceChildren(el("li", { class: "empty" }, "⚠ 新聞載入失敗：" + e.message));
+  }
+}
+
 // ---------- 載入與自動更新 ----------
 async function load(force) {
   $("refreshBtn").disabled = true;
@@ -644,7 +710,9 @@ window.addEventListener("resize", () => {
 filter = pref("filter") || "全部";
 applyPrefs();
 load(false);
+loadNews();
 setInterval(() => load(false), 60000);
+setInterval(loadNews, 5 * 60000);
 setInterval(() => { refreshStatuses(); showUpdated(); }, 30000);
 </script>
 </body>

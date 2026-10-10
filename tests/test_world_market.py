@@ -41,6 +41,21 @@ def test_catalog_consistent():
 
 
 # ---------- 資料 ----------
+RSS = """<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>t</title>
+<item><title>台積電法說會優於預期 外資連買 - 經濟日報</title><link>https://news.google.com/a1</link>
+<pubDate>Thu, 08 Oct 2026 03:10:00 GMT</pubDate><source url="https://money.udn.com">經濟日報</source></item>
+<item><title>台股早盤上漲百點 - 鉅亨網</title><link>https://news.google.com/a2</link>
+<pubDate>Thu, 08 Oct 2026 05:00:00 GMT</pubDate><source url="https://news.cnyes.com">鉅亨網</source></item>
+<item><title>台股早盤上漲百點 - 中央社</title><link>https://news.google.com/a3</link>
+<pubDate>Thu, 08 Oct 2026 04:00:00 GMT</pubDate><source url="https://www.cna.com.tw">中央社</source></item>
+<item><title>沒有連結</title><link>javascript:alert(1)</link></item>
+</channel></rss>""".encode("utf-8")
+
+
+def fake_news_get(url):
+    return RSS
+
+
 def fake_df(n=40, start=100.0, step=1.0):
     idx = pd.bdate_range(end="2026-10-08", periods=n)
     c = [start + i * step for i in range(n)]
@@ -80,7 +95,7 @@ class FakeTwse:
 
 def test_overview_mixes_sources():
     yh = FakeYahoo(missing={"SOL-USD"})
-    ov = DataService(yahoo_download=yh, twse_client=FakeTwse()).overview()
+    ov = DataService(yahoo_download=yh, twse_client=FakeTwse(), news_get=fake_news_get).overview()
     items = {i["symbol"]: i for g in ov["groups"] for i in g["items"]}
     tw = items["2330"]
     assert tw["source"] == "證交所即時" and tw["price"] == 200 and tw["change"] == 10
@@ -129,7 +144,7 @@ def test_overview_yahoo_failure_shows_errors():
 
 def test_overview_cached():
     yh = FakeYahoo()
-    svc = DataService(yahoo_download=yh, twse_client=FakeTwse())
+    svc = DataService(yahoo_download=yh, twse_client=FakeTwse(), news_get=fake_news_get)
     svc.overview()
     n = len(yh.calls)
     svc.overview()
@@ -139,7 +154,7 @@ def test_overview_cached():
 
 
 def test_history_and_validation():
-    svc = DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse())
+    svc = DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse(), news_get=fake_news_get)
     h = svc.history("^GSPC", "3mo")
     assert h["close"][-1] == 139 and h["change_pct"] == pytest.approx((139 / 100 - 1) * 100)
     assert len(h["dates"]) == len(h["close"])
@@ -243,7 +258,7 @@ def test_build_static_real_path_uses_one_yahoo_batch(tmp_path, monkeypatch):
     from world_market import data as wm_data
     monkeypatch.setattr(wm_data, "fetch_twse", lambda sym, period: ("2330.TW", fake_df(300)))
     yh = FakeYahoo()
-    svc = DataService(yahoo_download=yh, twse_client=FakeTwse())
+    svc = DataService(yahoo_download=yh, twse_client=FakeTwse(), news_get=fake_news_get)
     result = bs.build(tmp_path / "site", svc, log=lambda *_: None, history_cache=tmp_path / "hc")
     five_year = [c for c in yh.calls if c[1] == "5y"]
     assert len(five_year) == 1                                  # Yahoo 的歷史一次批次下載
@@ -276,10 +291,10 @@ def test_build_static_reuses_last_good_history(tmp_path, monkeypatch):
     from world_market import data as wm_data
     monkeypatch.setattr(wm_data, "fetch_twse", lambda sym, period: ("2330.TW", fake_df(300)))
     cache = tmp_path / "hc"
-    bs.build(tmp_path / "s1", DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse()),
+    bs.build(tmp_path / "s1", DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse(), news_get=fake_news_get),
              log=lambda *_: None, history_cache=cache)
     assert (cache / "_GSPC.json").exists()
-    result = bs.build(tmp_path / "s2", DataService(yahoo_download=FlakyYahoo(), twse_client=FakeTwse()),
+    result = bs.build(tmp_path / "s2", DataService(yahoo_download=FlakyYahoo(), twse_client=FakeTwse(), news_get=fake_news_get),
                       log=lambda *_: None, history_cache=cache)
     assert "^GSPC" in result["reused"] and (tmp_path / "s2" / "data" / "history" / "_GSPC.json").exists()
     assert "^GSPC" not in result["errors"]
@@ -289,7 +304,7 @@ def test_build_static_refuses_when_most_histories_missing(tmp_path, monkeypatch)
     from world_market import build_static as bs
     from world_market import data as wm_data
     monkeypatch.setattr(wm_data, "fetch_twse", lambda sym, period: ("2330.TW", fake_df(300)))
-    svc = DataService(yahoo_download=FlakyYahoo(), twse_client=FakeTwse())
+    svc = DataService(yahoo_download=FlakyYahoo(), twse_client=FakeTwse(), news_get=fake_news_get)
     with pytest.raises(SystemExit, match="歷史資料太少"):
         bs.build(tmp_path / "site", svc, log=lambda *_: None, history_cache=tmp_path / "empty")
 
@@ -301,6 +316,72 @@ def test_history_source_says_yahoo_when_twse_fails(monkeypatch, capsys):
         raise RuntimeError("證交所回應 HTTP 307")
     monkeypatch.setattr(wm_data, "fetch_twse", blocked)
     monkeypatch.setattr(wm_data, "fetch_history", lambda sym, period, source: ("2330.TW", fake_df(50)))
-    h = DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse()).history("2330", "3mo")
+    h = DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse(), news_get=fake_news_get).history("2330", "3mo")
     assert h["source"] == "Yahoo Finance"
     assert "改用 Yahoo" in capsys.readouterr().err
+
+
+# ---------- 財經新聞 ----------
+def test_parse_google_news_rss():
+    from world_market import news as nw
+    items = nw.parse_rss(RSS)
+    assert [i["title"] for i in items] == ["台股早盤上漲百點", "台積電法說會優於預期 外資連買"]   # 新的在前、重複標題只留一則
+    assert items[0]["source"] == "鉅亨網" and items[0]["published_utc"] == "2026-10-08T05:00:00Z"
+    assert all(i["link"].startswith("https://") for i in items)                       # 不安全的連結被擋掉
+
+
+def test_feed_urls_are_encoded():
+    from world_market import news as nw
+    url = nw.feed_url(nw.CATEGORIES[0][2])
+    assert url.startswith("https://news.google.com/rss/search?q=") and " " not in url and "ceid=TW:zh-Hant" in url
+
+
+def test_fetch_news_one_category_failing():
+    from world_market import news as nw
+    calls = []
+
+    def get(url):
+        calls.append(url)
+        if len(calls) == 2:
+            raise ConnectionError("down")
+        return RSS
+    out = nw.fetch_news(get=get, log=lambda *_: None)
+    assert [len(c["items"]) for c in out["categories"]] == [2, 0, 2, 2]
+    assert "down" in out["categories"][1]["error"]
+    merged = nw.merge_with_previous(out, {"categories": [{"key": "us", "items": [{"title": "舊"}]}]})
+    assert merged["categories"][1]["items"] == [{"title": "舊"}] and merged["categories"][1]["stale"]
+
+
+def test_service_news_cached_and_demo():
+    calls = []
+    svc = DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse(),
+                      news_get=lambda url: calls.append(url) or RSS)
+    svc.news()
+    n = len(calls)
+    svc.news()
+    assert len(calls) == n == 4
+    demo = DataService(demo=True).news()
+    assert all(c["items"] and "示範" in c["items"][0]["title"] for c in demo["categories"])
+
+
+def test_build_static_writes_news_and_reuses_previous(tmp_path, monkeypatch):
+    from world_market import build_static as bs
+    from world_market import data as wm_data
+    monkeypatch.setattr(wm_data, "fetch_twse", lambda sym, period: ("2330.TW", fake_df(300)))
+    cache = tmp_path / "hc"
+    bs.build(tmp_path / "s1", DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse(),
+                                          news_get=fake_news_get), log=lambda *_: None, history_cache=cache)
+    n1 = json.loads((tmp_path / "s1" / "data" / "news.json").read_text(encoding="utf-8"))
+    assert all(len(c["items"]) == 2 for c in n1["categories"]) and (cache / "news.json").exists()
+
+    def down(url):
+        raise ConnectionError("blocked")
+    bs.build(tmp_path / "s2", DataService(yahoo_download=FakeYahoo(), twse_client=FakeTwse(), news_get=down),
+             log=lambda *_: None, history_cache=cache)
+    n2 = json.loads((tmp_path / "s2" / "data" / "news.json").read_text(encoding="utf-8"))
+    assert all(c["items"] and c.get("stale") for c in n2["categories"])
+
+
+def test_server_news_route(server):
+    code, body, _ = get(server + "/api/news")
+    assert code == 200 and len(json.loads(body)["categories"]) == 4

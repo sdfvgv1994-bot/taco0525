@@ -20,6 +20,7 @@ from world_market.markets import (ALL_ITEMS, CLOCKS, EXCHANGES, GROUPS, Item,  #
 SPARK_DAYS = 30
 OVERVIEW_TTL = 60
 HISTORY_TTL = 10 * 60
+NEWS_TTL = 10 * 60
 
 
 def yahoo_code(it: Item) -> str:
@@ -48,7 +49,7 @@ def default_yahoo_download(symbols: list, period: str) -> dict:
 
 
 class DataService:
-    def __init__(self, demo: bool = False, yahoo_download=None, twse_client=None):
+    def __init__(self, demo: bool = False, yahoo_download=None, twse_client=None, news_get=None):
         self.demo = demo
         self.yahoo_download = yahoo_download or default_yahoo_download
         self._twse = twse_client
@@ -56,6 +57,10 @@ class DataService:
         self._overview = None
         self._overview_at = 0.0
         self._history: dict = {}
+        self._news = None
+        self._news_get = news_get   # 測試時換成假的 RSS 來源
+        self._news_at = 0.0
+        self._news_lock = threading.Lock()
 
     @property
     def twse(self):
@@ -193,6 +198,18 @@ class DataService:
                 "exchanges": {k: {"name": e.name, "tz": e.tz, "always": e.always,
                                   "sessions": [[f"{a:%H:%M}", f"{b:%H:%M}"] for a, b in e.sessions]}
                               for k, e in EXCHANGES.items()}}
+
+    # ------------------------------------------------------------ 財經新聞
+    def news(self, force: bool = False, get=None) -> dict:
+        from world_market import news as nw
+        with self._news_lock:
+            if not force and self._news and time.time() - self._news_at < NEWS_TTL:
+                return self._news
+            fresh = nw.demo_news() if self.demo else nw.fetch_news(
+                get=get or self._news_get, log=lambda *a: print(*a, file=sys.stderr))
+            self._news = nw.merge_with_previous(fresh, self._news)
+            self._news_at = time.time()
+            return self._news
 
     # ------------------------------------------------------------ 單一商品走勢
     def history(self, symbol: str, period: str = "1y") -> dict:

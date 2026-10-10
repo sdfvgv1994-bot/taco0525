@@ -52,6 +52,8 @@ def make_handler(service: DataService):
                     self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
                 elif url.path == "/api/overview":
                     self._json(200, service.overview(force=q.get("force") == ["1"]))
+                elif url.path == "/api/news":
+                    self._json(200, service.news())
                 elif url.path == "/api/history":
                     sym = q.get("symbol", [""])[0]
                     period = q.get("period", ["1y"])[0]
