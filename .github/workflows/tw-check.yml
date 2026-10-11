@@ -1,0 +1,46 @@
+# 暫時的檢查：讀主程式雲端執行的台股總覽日誌和線上資料，存回這個分支（只在 probe/tw-check 分支執行）
+name: tw-check
+on:
+  push:
+    branches: [probe/tw-check]
+    paths: [".github/workflows/tw-check.yml", "run_id.txt"]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: 讀日誌和線上資料
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          RID=$(cat run_id.txt)
+          gh run view "$RID" -R "$GITHUB_REPOSITORY" --log > out/full.log 2>&1 || echo "log failed $?" >> out/err.txt
+          grep -n -E "台股|tw_market|⚠|Traceback|Error|error|產生台股總覽|上市|上櫃|證交所|櫃買" out/full.log | grep -v "^.*pip" | head -400 > out/tw-lines.txt || true
+          awk '/產生台股總覽/{f=1} f' out/full.log | head -300 > out/tw-step.txt || true
+          rm -f out/full.log
+          B=https://sdfvgv1994-bot.github.io/taco0525/tw
+          curl -sS -o out/summary.json "$B/data/summary.json?t=$(date +%s)" -w "summary %{http_code}\n" >> out/http.txt
+          curl -sS -o out/stocks.json "$B/data/stocks.json?t=$(date +%s)" -w "stocks %{http_code}\n" >> out/http.txt
+          curl -sS -o out/h2330.json "$B/data/hist/2330.json?t=$(date +%s)" -w "hist2330 %{http_code}\n" >> out/http.txt
+          curl -sS -o out/index.html "$B/?t=$(date +%s)" -w "index %{http_code}\n" >> out/http.txt
+          python3 - <<'PY'
+          import json
+          s = json.load(open("out/stocks.json"))
+          rows = s["rows"]; f = s["fields"]
+          out = {"date": s["date"], "n": len(rows), "fields": f, "first": rows[:3],
+                 "2330": [r for r in rows if r[0] == "2330"], "6488": [r for r in rows if r[0] == "6488"]}
+          json.dump(out, open("out/stocks-head.json", "w"), ensure_ascii=False, indent=1)
+          PY
+          rm -f out/stocks.json
+          ls -la out
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add out
+          git commit -q -m "tw check results" || true
+          git push -q origin HEAD:probe/tw-check
