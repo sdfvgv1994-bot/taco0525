@@ -1,0 +1,300 @@
+build	產生台股總覽	﻿2026-10-11T10:01:44.2427782Z ##[group]Run exec python -m tw_market.build --out _site/tw
+build	產生台股總覽	2026-10-11T10:01:44.2428278Z ^[[36;1mexec python -m tw_market.build --out _site/tw^[[0m
+build	產生台股總覽	2026-10-11T10:01:44.2491731Z shell: /usr/bin/bash -e {0}
+build	產生台股總覽	2026-10-11T10:01:44.2492027Z env:
+build	產生台股總覽	2026-10-11T10:01:44.2492327Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.15/x64
+build	產生台股總覽	2026-10-11T10:01:44.2492831Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib/pkgconfig
+build	產生台股總覽	2026-10-11T10:01:44.2493324Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	產生台股總覽	2026-10-11T10:01:44.2493764Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	產生台股總覽	2026-10-11T10:01:44.2494191Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	產生台股總覽	2026-10-11T10:01:44.2494616Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib
+build	產生台股總覽	2026-10-11T10:01:44.2494983Z ##[endgroup]
+build	產生台股總覽	2026-10-11T10:02:59.9256029Z 台股資料更新（台北時間 2026-10-11 18:01）
+build	產生台股總覽	2026-10-11T10:02:59.9256621Z   上市行情 2026-10-09：沒有資料
+build	產生台股總覽	2026-10-11T10:02:59.9257008Z   上櫃行情 2026-10-09：沒有資料
+build	產生台股總覽	2026-10-11T10:02:59.9257488Z   2026-10-09 沒有開盤（休市），記下來以後不再抓
+build	產生台股總覽	2026-10-11T10:02:59.9258004Z   上市行情 2026-10-08：1321 檔
+build	產生台股總覽	2026-10-11T10:02:59.9258710Z   ⚠ 上櫃行情 2026-10-08：https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes 回應 HTTP 520
+build	產生台股總覽	2026-10-11T10:02:59.9259387Z   上市三大法人 2026-10-08：1302 檔
+build	產生台股總覽	2026-10-11T10:02:59.9259771Z   上市三大法人買賣金額 2026-10-08：完成
+build	產生台股總覽	2026-10-11T10:02:59.9260128Z   上市本益比 2026-10-08：1082 檔
+build	產生台股總覽	2026-10-11T10:02:59.9260485Z   上市融資融券 2026-10-08：1294 檔
+build	產生台股總覽	2026-10-11T10:02:59.9260827Z   上市產業別：1089 家
+build	產生台股總覽	2026-10-11T10:02:59.9261117Z   上櫃產業別：893 家
+build	產生台股總覽	2026-10-11T10:02:59.9261459Z   上市行情 2026-10-07：1321 檔
+build	產生台股總覽	2026-10-11T10:02:59.9261812Z   上市行情 2026-10-06：1322 檔
+build	產生台股總覽	2026-10-11T10:02:59.9262151Z   上市行情 2026-10-05：1322 檔
+build	產生台股總覽	2026-10-11T10:02:59.9262482Z   上市行情 2026-10-02：1321 檔
+build	產生台股總覽	2026-10-11T10:02:59.9262815Z   上市行情 2026-10-01：1321 檔
+build	產生台股總覽	2026-10-11T10:02:59.9263150Z   上市行情 2026-09-30：1322 檔
+build	產生台股總覽	2026-10-11T10:02:59.9263475Z   上市行情 2026-09-29：1322 檔
+build	產生台股總覽	2026-10-11T10:02:59.9263810Z   上市行情 2026-09-28：沒有資料
+build	產生台股總覽	2026-10-11T10:02:59.9264138Z   上市行情 2026-09-25：沒有資料
+build	產生台股總覽	2026-10-11T10:02:59.9264464Z   上市行情 2026-09-24：1320 檔
+build	產生台股總覽	2026-10-11T10:02:59.9264812Z   上市行情 2026-09-23：1320 檔
+build	產生台股總覽	2026-10-11T10:02:59.9265144Z   上市行情 2026-09-22：1321 檔
+build	產生台股總覽	2026-10-11T10:02:59.9265475Z   上市行情 2026-09-21：1320 檔
+build	產生台股總覽	2026-10-11T10:02:59.9266165Z   上市行情 2026-09-18：1317 檔
+build	產生台股總覽	2026-10-11T10:02:59.9266647Z   上市行情 2026-09-17：1317 檔
+build	產生台股總覽	2026-10-11T10:02:59.9267029Z   上市行情 2026-09-16：1319 檔
+build	產生台股總覽	2026-10-11T10:02:59.9267485Z   上市行情 2026-09-15：1319 檔
+build	產生台股總覽	2026-10-11T10:02:59.9267884Z   上市行情 2026-09-14：1319 檔
+build	產生台股總覽	2026-10-11T10:02:59.9268252Z   上市行情 2026-09-11：1319 檔
+build	產生台股總覽	2026-10-11T10:02:59.9268641Z   證交所這次已經連了 25 次，剩下的下次再抓
+build	產生台股總覽	2026-10-11T10:02:59.9269599Z 台股資料：證交所 25 次、櫃買中心 3 次、證交所 OpenAPI 1 次，新存 24 個檔，歷史 K 線 18 天，1 個錯誤；上櫃最新的行情這次沒抓到
+build	產生台股總覽	2026-10-11T10:02:59.9270207Z   · 上櫃行情還沒抓到，目前只有上市股票
+build	產生台股總覽	2026-10-11T10:02:59.9270583Z   · 三大法人買賣金額只有上市（上櫃暫不提供）
+build	產生台股總覽	2026-10-11T10:02:59.9271010Z   · 歷史 K 線還在補齊中（目前 18 天）
+build	產生台股總覽	2026-10-11T10:02:59.9290685Z ##[warning]台股資料：1 個錯誤（詳細看上面有 ⚠ 的行）
+build	產生台股總覽	2026-10-11T10:02:59.9298637Z 台股總覽完成：2026-10-08，1321 檔、1321 檔歷史，輸出到 _site/tw
+build	存台股總覽的快取	﻿2026-10-11T10:02:59.9959981Z ##[group]Run actions/cache/save@v4
+build	存台股總覽的快取	2026-10-11T10:02:59.9960294Z with:
+build	存台股總覽的快取	2026-10-11T10:02:59.9960533Z   path: .cache/tw/*
+build	存台股總覽的快取	!.cache/tw/status.json
+build	存台股總覽的快取	
+build	存台股總覽的快取	2026-10-11T10:02:59.9960848Z   key: tw-data-38130421663
+build	存台股總覽的快取	2026-10-11T10:02:59.9961114Z   enableCrossOsArchive: false
+build	存台股總覽的快取	2026-10-11T10:02:59.9961371Z env:
+build	存台股總覽的快取	2026-10-11T10:02:59.9961647Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.15/x64
+build	存台股總覽的快取	2026-10-11T10:02:59.9962103Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib/pkgconfig
+build	存台股總覽的快取	2026-10-11T10:02:59.9962548Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	存台股總覽的快取	2026-10-11T10:02:59.9962996Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	存台股總覽的快取	2026-10-11T10:02:59.9963393Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	存台股總覽的快取	2026-10-11T10:02:59.9963802Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib
+build	存台股總覽的快取	2026-10-11T10:02:59.9964148Z ##[endgroup]
+build	存台股總覽的快取	2026-10-11T10:03:00.1076587Z (node:2721) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+build	存台股總覽的快取	2026-10-11T10:03:00.1077747Z (Use `node --trace-deprecation ...` to show where the warning was created)
+build	存台股總覽的快取	2026-10-11T10:03:00.1281530Z [command]/usr/bin/tar --posix -cf cache.tzst --exclude cache.tzst -P -C /home/runner/work/taco0525/taco0525 --files-from manifest.txt --use-compress-program zstdmt
+build	存台股總覽的快取	2026-10-11T10:03:00.3239346Z (node:2721) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+build	存台股總覽的快取	2026-10-11T10:03:00.6642859Z Sent 840423 of 840423 (100.0%), 2.3 MBs/sec
+build	存台股總覽的快取	2026-10-11T10:03:00.7665289Z Cache saved with key: tw-data-38130421663
+build	Run actions/upload-pages-artifact@v3	﻿2026-10-11T10:03:00.7814073Z ##[group]Run actions/upload-pages-artifact@v3
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7814455Z with:
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7814671Z   path: _site
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7814898Z   name: github-pages
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7815139Z   retention-days: 1
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7815360Z env:
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7815630Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7816537Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib/pkgconfig
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7817003Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7817415Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7817819Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7818230Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7818583Z ##[endgroup]
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7877112Z ##[start-action display=Archive artifact;id=__actions_upload-pages-artifact.__run]
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7903433Z ##[group]Run echo ::group::Archive artifact
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7903853Z ^[[36;1mecho ::group::Archive artifact^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7904149Z ^[[36;1mtar \^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7904426Z ^[[36;1m  --dereference --hard-dereference \^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7904784Z ^[[36;1m  --directory "$INPUT_PATH" \^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7905123Z ^[[36;1m  -cvf "$RUNNER_TEMP/artifact.tar" \^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7905444Z ^[[36;1m  --exclude=.git \^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7906014Z ^[[36;1m  --exclude=.github \^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7906527Z ^[[36;1m  .^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7924800Z ^[[36;1mecho ::endgroup::^[[0m
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7953036Z shell: /usr/bin/sh -e {0}
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7953334Z env:
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7953636Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7954129Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib/pkgconfig
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7954616Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7955040Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7955474Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7956170Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7956543Z   INPUT_PATH: _site
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7956780Z ##[endgroup]
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.7998582Z ##[group]Archive artifact
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8012047Z ./
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8012434Z ./.nojekyll
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8012792Z ./tw/
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8013138Z ./tw/index.html
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8013748Z ./tw/data/
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8020117Z ./tw/data/hist/
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8020541Z ./tw/data/hist/00715L.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8020987Z ./tw/data/hist/2353.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8026448Z ./tw/data/hist/1587.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8046592Z ./tw/data/hist/1308.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8047085Z ./tw/data/hist/3029.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8047614Z ./tw/data/hist/00930.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8049253Z ./tw/data/hist/2464.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8049873Z ./tw/data/hist/009828.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8050385Z ./tw/data/hist/2408.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8050866Z ./tw/data/hist/2468.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8051309Z ./tw/data/hist/6541.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8051762Z ./tw/data/hist/00401A.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8052186Z ./tw/data/hist/5538.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8052607Z ./tw/data/hist/2712.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8053025Z ./tw/data/hist/00650L.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8053437Z ./tw/data/hist/6947.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8053847Z ./tw/data/hist/4119.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8054252Z ./tw/data/hist/4137.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8054658Z ./tw/data/hist/00982T.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8055065Z ./tw/data/hist/1513.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8055474Z ./tw/data/hist/2466.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8056162Z ./tw/data/hist/1466.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8056562Z ./tw/data/hist/1232.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8056962Z ./tw/data/hist/6955.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8057380Z ./tw/data/hist/6862.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8057784Z ./tw/data/hist/5292.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8058177Z ./tw/data/hist/4169.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8058914Z ./tw/data/hist/5519.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8059321Z ./tw/data/hist/9937.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8059722Z ./tw/data/hist/8271.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8060127Z ./tw/data/hist/1568.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8060533Z ./tw/data/hist/00660.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8060953Z ./tw/data/hist/6937.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8061349Z ./tw/data/hist/8249.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8061749Z ./tw/data/hist/6695.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8062154Z ./tw/data/hist/00898.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8062560Z ./tw/data/hist/8039.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8062973Z ./tw/data/hist/00830.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8063383Z ./tw/data/hist/4142.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8063793Z ./tw/data/hist/6526.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8064192Z ./tw/data/hist/0053.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8064590Z ./tw/data/hist/9902.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8064994Z ./tw/data/hist/6209.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8065598Z ./tw/data/hist/2424.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8066255Z ./tw/data/hist/7750.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8066659Z ./tw/data/hist/4536.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8067072Z ./tw/data/hist/2912.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8067465Z ./tw/data/hist/1617.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8067869Z ./tw/data/hist/2302.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8068271Z ./tw/data/hist/1321.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8068661Z ./tw/data/hist/4306.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8069063Z ./tw/data/hist/2527.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8069463Z ./tw/data/hist/2351.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8069861Z ./tw/data/hist/5244.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8070255Z ./tw/data/hist/8482.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8070656Z ./tw/data/hist/2014.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8071060Z ./tw/data/hist/00680L.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8071467Z ./tw/data/hist/3712.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8071868Z ./tw/data/hist/4540.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8072272Z ./tw/data/hist/3437.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8072675Z ./tw/data/hist/6776.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8073067Z ./tw/data/hist/2451.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8073473Z ./tw/data/hist/2348.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8073872Z ./tw/data/hist/9942.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8074263Z ./tw/data/hist/2401.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8074676Z ./tw/data/hist/9103.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8075075Z ./tw/data/hist/5871.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8075473Z ./tw/data/hist/00929.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8076201Z ./tw/data/hist/2002.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8076620Z ./tw/data/hist/2419.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8077025Z ./tw/data/hist/8411.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8077415Z ./tw/data/hist/2303.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8077815Z ./tw/data/hist/9921.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8078234Z ./tw/data/hist/6442.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8078630Z ./tw/data/hist/3605.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8079029Z ./tw/data/hist/3014.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8079433Z ./tw/data/hist/00897.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8079841Z ./tw/data/hist/9136.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8080239Z ./tw/data/hist/3046.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8080629Z ./tw/data/hist/3711.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8081035Z ./tw/data/hist/1808.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8081441Z ./tw/data/hist/6215.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8081843Z ./tw/data/hist/2328.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8082237Z ./tw/data/hist/2337.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8082640Z ./tw/data/hist/8105.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8083037Z ./tw/data/hist/6415.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8083451Z ./tw/data/hist/2440.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8083852Z ./tw/data/hist/2308.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8084240Z ./tw/data/hist/4739.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8084639Z ./tw/data/hist/6835.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8085038Z ./tw/data/hist/9802.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8085437Z ./tw/data/hist/8404.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8086007Z ./tw/data/hist/2477.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8086414Z ./tw/data/hist/0052.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8086814Z ./tw/data/hist/2851.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8087214Z ./tw/data/hist/00953B.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8087627Z ./tw/data/hist/2204.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8088025Z ./tw/data/hist/6674.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8088424Z ./tw/data/hist/4942.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8088816Z ./tw/data/hist/1907.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8089223Z ./tw/data/hist/4195.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8089623Z ./tw/data/hist/3645.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8090013Z ./tw/data/hist/2939.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8090702Z ./tw/data/hist/6205.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8091105Z ./tw/data/hist/1459.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8091503Z ./tw/data/hist/1314.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8091898Z ./tw/data/hist/8114.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8092297Z ./tw/data/hist/1539.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8092694Z ./tw/data/hist/6756.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8093084Z ./tw/data/hist/2889.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8093488Z ./tw/data/hist/3002.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8093882Z ./tw/data/hist/3037.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8094278Z ./tw/data/hist/4590.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8094678Z ./tw/data/hist/00926.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8095082Z ./tw/data/hist/3530.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8095479Z ./tw/data/hist/4572.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8096067Z ./tw/data/hist/2327.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8096455Z ./tw/data/hist/1217.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8096861Z ./tw/data/hist/6887.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8097439Z ./tw/data/hist/1309.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8097836Z ./tw/data/hist/00653L.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8098243Z ./tw/data/hist/2444.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8098647Z ./tw/data/hist/2880.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8099039Z ./tw/data/hist/00984D.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8099452Z ./tw/data/hist/00652.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8099856Z ./tw/data/hist/2705.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8100260Z ./tw/data/hist/3024.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8100657Z ./tw/data/hist/2027.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8101058Z ./tw/data/hist/1414.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8101455Z ./tw/data/hist/1525.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8101846Z ./tw/data/hist/3703.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8102244Z ./tw/data/hist/1454.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8102640Z ./tw/data/hist/6957.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8103039Z ./tw/data/hist/2454.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8103432Z ./tw/data/hist/3413.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8103838Z ./tw/data/hist/009801.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8104245Z ./tw/data/hist/2421.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8104638Z ./tw/data/hist/00646.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8105054Z ./tw/data/hist/3705.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8105455Z ./tw/data/hist/6202.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8106179Z ./tw/data/hist/2520.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8106598Z ./tw/data/hist/6201.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8107003Z ./tw/data/hist/6225.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8107405Z ./tw/data/hist/2497.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8107798Z ./tw/data/hist/00706L.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8108206Z ./tw/data/hist/009817.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8108613Z ./tw/data/hist/1473.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8109015Z ./tw/data/hist/7812.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8109408Z ./tw/data/hist/1717.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8109808Z ./tw/data/hist/2536.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8110207Z ./tw/data/hist/2945.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8110596Z ./tw/data/hist/3376.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8110996Z ./tw/data/hist/4967.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8111400Z ./tw/data/hist/1323.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8111800Z ./tw/data/hist/2852.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8112198Z ./tw/data/hist/2387.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8112608Z ./tw/data/hist/2380.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8113005Z ./tw/data/hist/2237.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8113401Z ./tw/data/hist/6230.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8113799Z ./tw/data/hist/4576.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8114205Z ./tw/data/hist/00639.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8114610Z ./tw/data/hist/1713.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8115003Z ./tw/data/hist/2114.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8115406Z ./tw/data/hist/00909.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8115987Z ./tw/data/hist/6834.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8116405Z ./tw/data/hist/4588.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8116816Z ./tw/data/hist/3714.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8117222Z ./tw/data/hist/00642U.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8117644Z ./tw/data/hist/009803.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8118044Z ./tw/data/hist/1417.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8118449Z ./tw/data/hist/6792.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8118855Z ./tw/data/hist/3443.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8119252Z ./tw/data/hist/3149.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8119651Z ./tw/data/hist/3004.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8120061Z ./tw/data/hist/2534.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8120473Z ./tw/data/hist/8081.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8120870Z ./tw/data/hist/2538.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8121269Z ./tw/data/hist/6902.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8121857Z ./tw/data/hist/00665L.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8122260Z ./tw/data/hist/5243.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8122660Z ./tw/data/hist/1626.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8123062Z ./tw/data/hist/006208.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8123473Z ./tw/data/hist/2884.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8123864Z ./tw/data/hist/4770.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8124261Z ./tw/data/hist/4746.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8124655Z ./tw/data/hist/2006.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8125046Z ./tw/data/hist/1110.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8125444Z ./tw/data/hist/1528.json
+build	Run actions/upload-pages-artifact@v3	2026-10-11T10:03:00.8126044Z ./tw/data/hist/6951.json
