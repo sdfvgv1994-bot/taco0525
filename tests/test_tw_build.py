@@ -394,6 +394,10 @@ def test_assemble_matches_contract(tmp_path, small):
     assert tsmc["pe"] == 29.56 and tsmc["foreign"] is not None and tsmc["margin_balance"] is not None
     assert rows["0050"]["industry"] == "ETF" and rows["0050"]["pb"] is None
     assert rows["1234"]["close"] is None and rows["1234"]["change_pct"] is None
+    # 上市的法人名單有資料、但沒有 1234：沒有法人買賣，是 0 不是 null
+    assert (rows["1234"]["foreign"], rows["1234"]["inst_total"]) == (0, 0)
+    assert (rows["2317"]["limit"], rows["1101"]["limit"], rows["2330"]["limit"]) == (1, -1, 0)
+    assert rows["0050"]["limit"] is None and rows["1234"]["limit"] is None
     tse, otc = summary["markets"]["tse"], summary["markets"]["otc"]
     assert (tse["up"], tse["down"], tse["flat"], tse["limit_up"], tse["limit_down"]) == (2, 1, 0, 1, 1)
     assert (otc["up"], otc["down"], otc["flat"]) == (1, 0, 1)
@@ -410,7 +414,10 @@ def test_assemble_matches_contract(tmp_path, small):
     assert h["dates"] == [d.isoformat() for d in sorted(trading_days(THU, 6, set()))]
     assert h["close"] == sorted(h["close"]) and len(h["inst"]["dates"]) == 3 and len(h["margin"]["dates"]) == 3
     h1234 = json.loads((out / "data" / "hist" / "1234.json").read_text(encoding="utf-8"))
-    assert len(h1234["dates"]) == 5 and h1234["inst"] is None      # 最新一天沒成交；沒有法人資料
+    # 最新一天沒成交：那天是 null；有成交的日子不在法人名單上 = 0
+    assert len(h1234["dates"]) == 5 and h1234["inst"] == {
+        "dates": ["2026-10-06", "2026-10-07", "2026-10-08"],
+        "foreign": [0, 0, None], "trust": [0, 0, None], "dealer": [0, 0, None]}
     assert not (out / "data" / "hist" / "030001.json").exists()
     assert (out / "index.html").exists()
 
@@ -504,8 +511,8 @@ def test_failed_build_keeps_previous_output(tmp_path, small, monkeypatch):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["cache", "tw"]      # 沒留下暫存資料夾
     monkeypatch.undo()
 
-    def bad(store, now=None, log=print):                       # 格式檢查不通過：大聲報錯、不動網頁
-        s, st, h = real(store, now, log)
+    def bad(store, now=None, log=print, **kw):                 # 格式檢查不通過：大聲報錯、不動網頁
+        s, st, h = real(store, now, log, **kw)
         st[0]["type"] = "warrant"
         return s, st, h
     real = tw_build.assemble
@@ -575,17 +582,286 @@ def test_workflow_has_tw_steps():
     assert "tw_market/**" in on["push"]["paths"]
     steps = wf["jobs"]["build"]["steps"]
     names = [s.get("name") or s.get("uses") for s in steps]
-    caches = [s for s in steps if str(s.get("uses", "")).startswith("actions/cache")]
-    tw_cache = [s for s in caches if s["with"]["path"] == ".cache/tw"]
-    assert tw_cache and tw_cache[0]["with"]["key"] == "tw-${{ github.run_id }}"
-    assert tw_cache[0]["with"]["restore-keys"] == "tw-"
+    data_path = [".cache/tw", "!.cache/tw/status.json"]            # 抓資料的紀錄另外存
+    restore = steps[names.index("取出台股總覽的快取")]
+    assert restore["uses"] == "actions/cache/restore@v4"
+    assert restore["with"]["path"].split() == data_path
+    assert restore["with"]["key"] == "tw-data-${{ github.run_id }}" and restore["with"]["restore-keys"] == "tw-data-"
+    status = [s for s in steps if str(s.get("uses", "")).startswith("actions/cache@")
+              and s["with"]["path"] == ".cache/tw/status.json"]
+    assert status and status[0]["with"]["restore-keys"] == "tw-status-"     # 很小，每次都存
+    assert "tw-data-".startswith(status[0]["with"]["restore-keys"]) is False
     i = names.index("產生台股總覽")
     tw = steps[i]
     assert tw["id"] == "tw" and tw["continue-on-error"] is True and tw["timeout-minutes"] == 12
     assert tw["run"].strip() == "python -m tw_market.build --out _site/tw"
     fb = steps[i + 1]
     assert fb["if"].replace('"', "'") == "steps.tw.outcome != 'success'" and fb["continue-on-error"] is True
-    assert fb["run"].strip() == "python -m tw_market.build --out _site/tw --no-fetch"
+    assert fb["id"] == "tw_cached"
+    assert fb["run"].strip() == "python -m tw_market.build --out _site/tw --no-fetch --fetch-failed"
+    save = steps[i + 2]                                             # 快取有變動才存（不然幾天就用完快取空間）
+    assert save["uses"] == "actions/cache/save@v4" and save["with"]["path"].split() == data_path
+    assert save["with"]["key"] == restore["with"]["key"]
+    assert save["if"].replace('"', "'") == ("steps.tw.outputs.changed == 'true' || "
+                                            "steps.tw_cached.outputs.changed == 'true'")
     upload = names.index("actions/upload-pages-artifact@v3")
-    assert names.index("產生看板網頁") < i < upload and i + 1 < upload
-    assert steps.index(tw_cache[0]) < names.index("產生看板網頁")
+    assert names.index("產生看板網頁") < i < upload and i + 2 < upload
+    assert steps.index(restore) < steps.index(status[0]) < names.index("產生看板網頁")
+    assert not any(s["with"].get("restore-keys") == "tw-" for s in steps if "with" in s and "cache" in s.get("uses", ""))
+
+
+# ---------------------------------------------------------------- 審查修正：漲停跌停、漲跌家數
+@pytest.mark.parametrize("prev,up,down", [
+    (98.1, 107.5, 88.3),       # 1303 南亞：100 元以上一檔 0.5，只漲 9.58% 就漲停
+    (45.35, 49.85, 40.85),     # 1568 倉佑收 49.80（+9.81%）不是漲停
+    (8.80, 9.68, 7.92),        # 9105 泰金寶-DR
+    (76.5, 84.1, 68.9),        # 6456 GIS-KY 收 83.90 不是漲停
+    (46.35, 50.9, 41.75),      # 8455 大拓-KY 收 41.80（−9.82%）不是跌停
+    # 櫃買中心 10/08 公布的「次日 漲停價 / 跌停價」，各個升降單位都有
+    (7.98, 8.77, 7.19), (10.35, 11.35, 9.32), (49.65, 54.6, 44.7), (53.8, 59.1, 48.45),
+    (64.2, 70.6, 57.8), (97.0, 106.5, 87.3), (249.5, 274.0, 225.0), (497.0, 546.0, 447.5),
+    (581.0, 639.0, 523.0), (1030.0, 1130.0, 927.0), (2960.0, 3255.0, 2665.0),
+])
+def test_limit_prices_follow_tick_rule(prev, up, down):
+    assert contract.limit_prices(prev) == (up, down)
+
+
+def test_limit_of_needs_exact_limit_price():
+    assert contract.limit_of(107.5, 9.4) == 1               # 南亞 +9.58% 是漲停
+    assert contract.limit_of(49.8, 4.45) == 0               # 倉佑 +9.81% 不是
+    assert contract.limit_of(41.75, -4.6) == -1
+    assert contract.limit_of(112.0, 12.0) == 0              # 沒有漲跌幅限制的新股 +12% 不算漲停
+    assert contract.limit_of(None, 1.0) is None and contract.limit_of(10.0, None) is None
+    assert contract.limit_prices(0) is None and contract.limit_prices(float("nan")) is None
+
+
+def _cache_with(tmp_path, tse_rows, otc_rows=None, d=THU, industry=None, insti=None):
+    """直接寫一天的快取（不經過 update）。rows：{代號: (名稱, 收盤, 漲跌)}。"""
+    store = Store(tmp_path / "cache")
+    for mk, src in (("tse", tse_rows), ("otc", otc_rows or {})):
+        if src:
+            store.save("quotes", mk, d, {"date": d.isoformat(), "index": None, "totals": None, "rows": {
+                c: {"name": n, "open": cl, "high": cl, "low": cl, "close": cl, "change": ch,
+                    "volume": None if cl is None else 10, "value": 1000, "trades": 1, "pe": None}
+                for c, (n, cl, ch) in src.items()}})
+    for mk, rows in (insti or {}).items():
+        store.save("insti", mk, d, {"date": d.isoformat(), "rows": rows})
+    store.save_industry(industry or {})
+    return store
+
+
+def test_breadth_and_limits_match_exchange_rules(tmp_path):
+    """漲跌家數、漲停跌停：只算股票、不算存託憑證，漲停要剛好等於漲停價（審查：6/1 多算 8 檔漲停）。"""
+    store = _cache_with(tmp_path, {
+        "1303": ("南亞", 107.5, 9.4),          # 漲停（+9.58%）
+        "1568": ("倉佑", 49.8, 4.45),          # +9.81% 但不是漲停
+        "7827": ("漢康-KY創", 112.0, 12.0),     # 新股沒有漲跌幅限制
+        "1101": ("台泥", 9.0, -1.0),           # 跌停
+        "8455": ("大拓-KY", 41.8, -4.55),      # −9.82% 但不是跌停
+        "1103": ("嘉泥", 13.15, 0.0),
+        "1341": ("富林-KY", 59.1, None),       # 不比價（除權息等）
+        "9105": ("泰金寶-DR", 9.68, 0.88),      # 存託憑證：證交所不算
+        "9103": ("美德醫療-DR", 5.16, -0.07),   # 存託憑證（產業別還沒抓到，看名稱）
+        "0050": ("元大台灣50", 55.0, 5.0),      # ETF 不算
+        "00636K": ("國泰中國A50+U", 9.21, -0.08),   # 外幣 ETF（舊快取裡可能有）：不收
+    }, industry={"tse": {"9105": "存託憑證"}})
+    summary, stocks, _ = tw_build.assemble(store, at(THU, 22))
+    tse = summary["markets"]["tse"]
+    assert (tse["up"], tse["down"], tse["flat"]) == (3, 2, 1)
+    assert (tse["limit_up"], tse["limit_down"]) == (1, 1)
+    rows = {s["code"]: s for s in stocks}
+    assert "00636K" not in rows
+    assert {c: rows[c]["limit"] for c in ("1303", "1568", "7827", "1101", "8455", "1341", "9105", "0050")} == {
+        "1303": 1, "1568": 0, "7827": 0, "1101": -1, "8455": 0, "1341": None, "9105": 1, "0050": None}
+    assert tw_build.validate(summary, stocks, {}) == []
+
+
+def test_institutional_absent_means_zero(tmp_path):
+    """交易所的法人名單不列「沒有法人買賣」的股票：名單有資料但沒有這檔 → 0；整天沒有資料 → null。"""
+    store = _cache_with(tmp_path, {"2330": ("台積電", 1000.0, 5.0), "2314": ("台揚", 20.0, 0.1)},
+                        {"6488": ("環球晶", 400.0, 4.0)},
+                        insti={"tse": {"2330": {"foreign": 5, "trust": 1, "dealer": 0, "total": 6}}})
+    _, stocks, hists = tw_build.assemble(store, at(THU, 22))
+    rows = {s["code"]: s for s in stocks}
+    assert [rows["2314"][k] for k in ("foreign", "trust", "dealer", "inst_total")] == [0, 0, 0, 0]
+    assert rows["2330"]["inst_total"] == 6
+    assert rows["6488"]["foreign"] is None                     # 上櫃那天的法人資料整個沒有
+    assert hists["2314"]["inst"] == {"dates": ["2026-10-08"], "foreign": [0], "trust": [0], "dealer": [0]}
+    assert hists["6488"]["inst"] is None
+    assert rows["2314"]["margin_balance"] is None              # 融資融券不在名單上 = 不能信用交易，維持 null
+
+
+# ---------------------------------------------------------------- 審查修正：應該有卻沒有的資料不要一直重問
+def _past(days, d):
+    return [x for x in days if x < d]
+
+
+def test_wrong_date_answers_cost_one_request_per_run(tmp_path, small):
+    """櫃買中心不管日期都回最新一天（網站改版）：這類資料每次只浪費 1 次，錯誤會記下來，籌碼照樣補。"""
+    ex = FakeExchange(DAYS)
+    for d in _past(DAYS, THU):
+        ex.override[("quotes", "otc", d)] = ex.parsed("quotes", "otc", THU)
+    store = Store(tmp_path)
+    stats, _ = run(store, ex, at(THU, 22))
+    wasted = [c for c in ex.calls if c[:2] == ("quotes", "otc") and c[2] != THU]
+    assert len(wasted) == 1 and any("日期是 2026-10-08" in e for e in stats["errors"])
+    assert store.has("insti", "otc", THU) and store.has("margin", "otc", THU)
+    assert stats["closed_added"] == []
+    first = wasted[0][2]
+    for k in range(2, 6):                                       # 之後每次也只浪費 1 次
+        ex.calls.clear()
+        stats, _ = run(store, ex, at(THU, 22) + timedelta(minutes=15 * k))
+        wasted = [c for c in ex.calls if c[:2] == ("quotes", "otc") and c[2] != THU]
+        assert len(wasted) == 1 and stats["errors"]
+    # 同一天問了 3 次就不再問（之後一天只問一次）
+    assert ex.calls.count(("quotes", "otc", first)) == 0
+    status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
+    assert status["missing"][f"quotes/otc/{first:%Y%m%d}"] == [3, "2026-10-08"]
+
+
+def test_one_market_missing_past_days_stops_after_streak(tmp_path, small):
+    """櫃買中心過去的日子都回空的、證交所有：連續 2 天就停，不會把每次的次數用完。"""
+    ex = FakeExchange(DAYS)
+    ex.missing |= {("quotes", "otc", d) for d in _past(DAYS, THU)}
+    store = Store(tmp_path)
+    stats, _ = run(store, ex, at(THU, 22))
+    asked = [c for c in ex.calls if c[:2] == ("quotes", "otc") and c[2] != THU]
+    assert len(asked) == 2 and len([e for e in stats["errors"] if "那天有開盤" in e]) == 2
+    assert store.closed() == set()                              # 證交所有開盤：不是休市
+    assert len(store.dates("quotes", "tse")) == 6               # 上市照樣補齊
+
+
+def test_holiday_needs_both_markets_even_across_runs(tmp_path, small):
+    """只有一個市場說沒有、另一個這次沒問到（被封鎖）：先不記休市；下次另一個市場有資料就補回來。"""
+    ex = FakeExchange(DAYS + [FRI])
+    ex.fail["www.twse.com.tw"] = TwseError("www.twse.com.tw 回應 HTTP 307（連線太頻繁被暫時封鎖）")
+    ex.missing.add(("quotes", "otc", FRI))                      # 櫃買中心這次剛好回空的
+    store = Store(tmp_path)
+    stats, _ = run(store, ex, at(SAT, 10))
+    assert FRI not in store.closed() and stats["closed_added"] == []
+    assert not stats["confirmed"]
+    ex.fail.clear()
+    ex.missing.clear()
+    run(store, ex, at(SAT, 10, 15))
+    assert store.has("quotes", "tse", FRI) and store.has("quotes", "otc", FRI) and store.closed() == set()
+
+
+def test_holiday_confirmed_by_second_market_in_a_later_run(tmp_path, small):
+    ex = FakeExchange(DAYS)                                     # 10/9 休市
+    ex.fail["www.twse.com.tw"] = TwseError("www.twse.com.tw 回應 HTTP 307（連線太頻繁被暫時封鎖）")
+    store = Store(tmp_path)
+    run(store, ex, at(SAT, 10))
+    assert FRI not in store.closed()
+    ex.fail.clear()
+    run(store, ex, at(SAT, 10, 15))
+    run(store, ex, at(SAT, 10, 30))
+    assert store.closed() == {FRI}
+    assert ex.calls.count(("quotes", "otc", FRI)) == 1          # 等證交所回答時，不再重問櫃買中心
+    assert ex.calls.count(("quotes", "tse", FRI)) == 2          # 第一次被封鎖、第二次回答沒有
+
+
+# ---------------------------------------------------------------- 審查修正：格式不對的快取檔
+@pytest.mark.parametrize("content", ["{}", "null", "[]", '{"date": "2026-10-07", "rows": {"2330": {}}}',
+                                     '{"date": "2026-10-08", "rows": {}}'])
+def test_wrong_shape_cache_file_is_refetched_in_the_same_run(tmp_path, small, content):
+    store = Store(tmp_path)
+    run(store, FakeExchange(DAYS), at(THU, 22))
+    store.path("quotes", "tse", THU).write_text(content, encoding="utf-8")
+    store.path("insti", "otc", THU).write_text(content.replace("2026-10-08", "2026-10-09"), encoding="utf-8")
+    ex = FakeExchange(DAYS)
+    stats, _ = run(Store(tmp_path), ex, at(THU, 22, 15))
+    assert set(ex.calls) == {("quotes", "tse", THU), ("insti", "otc", THU)} and stats["changed"]
+    summary, stocks, _ = tw_build.assemble(Store(tmp_path), at(THU, 22, 15))
+    assert summary["date"] == "2026-10-08" and any(s["code"] == "2330" for s in stocks)
+
+
+def test_wrong_shape_cache_file_is_dropped_when_building(tmp_path, small):
+    store = Store(tmp_path)
+    run(store, FakeExchange(DAYS), at(THU, 22))
+    store.path("quotes", "tse", THU).write_text("{}", encoding="utf-8")
+    summary, stocks, _ = tw_build.assemble(Store(tmp_path), at(THU, 22))
+    assert summary["date"] == "2026-10-07" and any(s["code"] == "2330" for s in stocks)
+    assert not store.path("quotes", "tse", THU).exists()          # 刪掉，下次重抓
+
+
+# ---------------------------------------------------------------- 審查修正：抓不到時不能假裝剛更新
+class Down:
+    """兩個網站都連不上。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    def _get_json(self, url, params):
+        self.calls += 1
+        raise TwseError(f"{urlparse(url).hostname} 回應 HTTP 500")
+
+
+def test_failed_fetch_keeps_last_confirmed_time_and_says_data_is_behind(tmp_path, small):
+    cache = tmp_path / "cache"
+    tw_build.build(tmp_path / "a", cache_dir=cache, now=at(THU, 22), client=FakeExchange(DAYS), sources=SRC,
+                   max_per_host=100, log=lambda *_: None)
+    tue = date(2026, 10, 13)
+    r = tw_build.build(tmp_path / "b", cache_dir=cache, now=at(tue, 16), client=Down(), sources=SRC,
+                       log=lambda *_: None)
+    assert r["update"]["errors"] and not r["update"]["confirmed"]
+    summary = json.loads((tmp_path / "b" / "data" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["updated_utc"] == "2026-10-08T14:00:00Z"            # 上一次確認的時間，不是現在
+    assert summary["notes"][0] == "行情還沒抓到 10/13 的，先顯示 10/08 的"
+    # GitHub Actions 抓資料那步失敗、改用快取重新產生
+    tw_build.build(tmp_path / "c", cache_dir=cache, now=at(tue, 16, 5), fetch=False, fetch_failed=True,
+                   log=lambda *_: None)
+    summary = json.loads((tmp_path / "c" / "data" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["notes"][:2] == [tw_build.FETCH_FAILED, "行情還沒抓到 10/13 的，先顯示 10/08 的"]
+    assert summary["updated_utc"] == "2026-10-08T14:00:00Z"
+
+
+@pytest.mark.parametrize("now", [at(FRI, 16), at(THU, 14, 5)])
+def test_no_false_alarm_when_exchange_has_nothing_newer(tmp_path, small, now):
+    """平日休市還沒發現（10/9）、或今天的行情還沒公布：交易所確認過沒有更新的，不會說「還沒抓到」。"""
+    ex = FakeExchange(DAYS)
+    if now.date() == THU:
+        ex.missing |= {("quotes", m, THU) for m in ("tse", "otc")}
+    cache = tmp_path / "cache"
+    r = tw_build.build(tmp_path / "s", cache_dir=cache, now=now, client=ex, sources=SRC, max_per_host=100,
+                       log=lambda *_: None)
+    assert r["update"]["confirmed"]
+    summary = json.loads((tmp_path / "s" / "data" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["updated_utc"] == now.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert not any("行情還沒抓到" in n for n in summary["notes"])
+
+
+# ---------------------------------------------------------------- 審查修正：沒變動就不存快取
+def test_changed_flag_only_when_cache_data_changes(tmp_path, small, monkeypatch):
+    calls = []
+    r = tw_build.build(tmp_path / "s", cache_dir=tmp_path / "cache", now=at(THU, 22), client=FakeExchange(DAYS),
+                       sources=SRC, max_per_host=100, log=lambda *_: None, on_change=lambda: calls.append(1))
+    assert r["update"]["changed"] and calls == [1]                 # 第一次有變動時通知一次
+    ex = FakeExchange(DAYS)
+    r = tw_build.build(tmp_path / "s", cache_dir=tmp_path / "cache", now=at(THU, 22, 15), client=ex,
+                       sources=SRC, log=lambda *_: None, on_change=lambda: calls.append(2))
+    assert ex.calls == [] and not r["update"]["changed"] and calls == [1]
+    status = json.loads((tmp_path / "cache" / "status.json").read_text(encoding="utf-8"))
+    assert status["checked_utc"] == "2026-10-08T14:15:00Z"         # 抓資料的紀錄每次都更新（另外存）
+
+    out = tmp_path / "gh_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    tw_build.main(["--out", str(tmp_path / "t"), "--no-fetch", "--cache", str(tmp_path / "cache")])
+    assert not out.exists()                                         # 沒變動：不存快取
+    Store(tmp_path / "cache").path("quotes", "tse", THU).write_text("{}", encoding="utf-8")
+    tw_build.main(["--out", str(tmp_path / "t"), "--no-fetch", "--fetch-failed", "--cache", str(tmp_path / "cache")])
+    assert out.read_text(encoding="utf-8") == "changed=true\n"      # 刪了壞掉的檔：要存
+
+
+def test_prune_keeps_only_what_is_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(contract, "HIST_MAX_DAYS", 30)
+    monkeypatch.setattr(contract, "CHIPS_MAX_DAYS", 3)
+    store = Store(tmp_path)
+    for d in weekdays(date(2026, 7, 1), THU):
+        for ds in ("valuation", "insti_totals", "insti"):
+            store.save(ds, "tse", d, {"date": d.isoformat(), "rows": {"2330": {}}, "total": 1})
+    store.save_status({"missing": {"insti/tse/20260701": [1, "2026-07-02"], "quotes/tse/20261007": [1, "2026-10-08"]}})
+    run(store, FakeExchange([]), at(THU, 22), max_per_host=0)
+    assert store.dates("valuation", "tse") == trading_days(THU, 3, set())[::-1]     # 只用最新一天：不多留
+    assert store.dates("insti_totals", "tse") == trading_days(THU, 3, set())[::-1]
+    assert store.dates("insti", "tse")[0] == date(2026, 9, 7)      # 10/6 往前多留 30 天（9/6 是週日）
+    assert list(store.status()["missing"]) == ["quotes/tse/20261007"]                  # 太舊的紀錄清掉

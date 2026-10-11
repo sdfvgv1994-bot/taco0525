@@ -10,14 +10,19 @@ GitHub Actions 每 15 分鐘執行一次，每次依重要性排隊抓：
 證交所和櫃買中心的請求交錯送出，兩邊各自的 3 秒間隔可以重疊，比較快。
 
 今天的資料要等公布後才抓（行情 14:00、本益比 15:00、三大法人 15:30、融資融券 21:00），
-在那之前「最新一天」是前一個交易日。平日抓不到過去某天的行情（兩個市場都沒有）就記成休市。
+在那之前「最新一天」是前一個交易日。
+
+過去某個平日兩個市場都說「沒有行情」才記成休市（可以是不同次執行問到的）；只有一個市場說沒有、
+另一個還沒問到（被封鎖、次數用完）時先等，不會因為一次異常就把交易日刪掉。
+過去的日子「應該有卻沒有」（另一個市場有、日期不對、一檔都沒有）記在 status.json：
+前 MISS_TRIES 次每次都問，之後一天只再問一次，不會每 15 分鐘一直重問。
 """
 from __future__ import annotations
 
 import importlib
 import time as _time
 from collections import Counter, deque
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -35,10 +40,13 @@ PUBLISH = {"quotes": time(14, 0), "otc_index": time(14, 0), "valuation": time(15
 INDUSTRY_MAX_AGE = timedelta(days=7)
 NET_ERRORS_PER_HOST = 2        # 同一個網站連線失敗（逾時等）幾次就先不連
 KEEP_EXTRA_DAYS = 30           # 清快取時多留幾天，避免剛好用得到的被刪掉
+MISS_TRIES = 3                 # 過去的日子應該有卻沒有：前幾次每次都問，之後一天只再問一次
+MISS_STREAK = 2                # 同一次執行裡同一類資料連續幾天應該有卻沒有，就當成網站有問題，這次先不抓
 
 LABELS = {"quotes": "行情", "insti": "三大法人", "insti_totals": "三大法人買賣金額",
           "margin": "融資融券", "valuation": "本益比", "otc_index": "櫃買指數", "industry": "產業別"}
 MARKET_NAMES = {"tse": "上市", "otc": "上櫃"}
+OTHER = {"tse": "otc", "otc": "tse"}
 HOST_NAMES = {"www.twse.com.tw": "證交所", "openapi.twse.com.tw": "證交所 OpenAPI",
               "www.tpex.org.tw": "櫃買中心"}
 
@@ -94,6 +102,28 @@ def latest_day(dataset: str, now: datetime, closed) -> date:
 
 
 # ---------------------------------------------------------------- 抓資料
+def _key(task) -> str:
+    dataset, market, d = task
+    return f"{dataset}/{market}/{d:%Y%m%d}"
+
+
+def _from_key(key: str):
+    """'quotes/otc/20260915' → ("quotes", "otc", date)；看不懂就是 None。"""
+    try:
+        dataset, market, ymd = key.split("/")
+        return dataset, market, date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8]))
+    except (AttributeError, ValueError):
+        return None
+
+
+def _misses(status: dict) -> dict:
+    """status.json 的 missing：{key: [次數, 最後一次問的日期]}，格式不對的丟掉。"""
+    raw = status.get("missing") if isinstance(status.get("missing"), dict) else {}
+    return {k: [v[0], v[1]] for k, v in raw.items()
+            if _from_key(k) and isinstance(v, list) and len(v) == 2 and isinstance(v[0], int)
+            and not isinstance(v[0], bool) and isinstance(v[1], str)}
+
+
 class _Updater:
     def __init__(self, store, client, now, src, max_per_host, deadline_s, log, clock):
         self.store, self.client, self.src, self.log, self.clock = store, client, src, log, clock
@@ -110,7 +140,11 @@ class _Updater:
         self.net_errors: Counter = Counter()
         self.broken: set[tuple] = set()         # 這次格式不對或網址有問題的 (資料, 市場)
         self.tried: set[tuple] = set()          # 這次已經問過的（沒資料也不再問）
-        self.no_quotes: dict[date, set] = {}    # 過去某天哪個市場回答「沒有行情」
+        self.not_yet: set[tuple] = set()        # 今天的資料問了，交易所說還沒有（還沒公布）
+        self.streak: Counter = Counter()        # (資料, 市場) 這次連續幾天應該有卻沒有
+        status = store.status()
+        self.checked_utc = status.get("checked_utc") if isinstance(status.get("checked_utc"), str) else None
+        self.misses = _misses(status)           # 過去的日子應該有卻沒有的紀錄（跨執行保存）
         self.timed_out = False
 
     # ---- 小工具 ----
@@ -155,11 +189,31 @@ class _Updater:
             return True
         if dataset == "quotes" and d in self.closed:
             return True
-        if dataset in DAILY:
-            return self.store.has(dataset, market, d)
-        if dataset == "otc_index":
-            return d.isoformat() in self.store.otc_index(d.year, d.month)
-        return False
+        if dataset in DAILY and self.store.has(dataset, market, d):
+            return True
+        if dataset == "otc_index" and d.isoformat() in self.store.otc_index(d.year, d.month):
+            return True
+        return d is not None and self.skip_miss(task)
+
+    # ---- 應該有卻沒有的紀錄 ----
+    def miss_count(self, task) -> int:
+        return (self.misses.get(_key(task)) or [0])[0]
+
+    def skip_miss(self, task) -> bool:
+        """之前問過沒有：行情先等另一個市場（也沒有就是休市，有的話才重問這個市場）；
+        問了 MISS_TRIES 次以上的，今天問過就不再問。"""
+        got = self.misses.get(_key(task))
+        if not got:
+            return False
+        dataset, market, d = task
+        if dataset == "quotes" and not self.store.has("quotes", OTHER[market], d):
+            return True
+        return got[0] >= MISS_TRIES and got[1] == self.today.isoformat()
+
+    def record_miss(self, task) -> int:
+        n = self.miss_count(task) + 1
+        self.misses[_key(task)] = [n, self.today.isoformat()]
+        return n
 
     # ---- 執行 ----
     def run(self, tasks) -> None:
@@ -223,7 +277,7 @@ class _Updater:
             if dataset == "industry":
                 self.save_industry(market, parsed, what)
             elif dataset == "otc_index":
-                self.save_index(d, parsed, what)
+                self.save_index(task, parsed, what)
             else:
                 self.save_day(task, parsed, what)
         except (TypeError, ValueError) as e:      # 解析結果不能存成 JSON：程式問題，這類資料先不抓
@@ -234,47 +288,96 @@ class _Updater:
     def save_day(self, task, parsed, what) -> None:
         dataset, market, d = task
         if parsed is None:
-            if dataset == "quotes" and d < self.today:
-                self.no_quotes.setdefault(d, set()).add(market)
-            self.log(f"  {what}：沒有資料")
+            self.no_data(task, what)
             return
-        if not isinstance(parsed, dict) or parsed.get("date") != d.isoformat():
-            got = parsed.get("date") if isinstance(parsed, dict) else None
-            self.log(f"  {what}：回應的日期是 {got}，和要的不一樣，先不存")
+        got = parsed.get("date") if isinstance(parsed, dict) else None
+        rows = parsed.get("rows") if isinstance(parsed, dict) else None
+        if got != d.isoformat():
+            self.wrong_answer(task, what, f"回應的日期是 {got}，和要的不一樣")
             return
-        rows = parsed.get("rows")
         if dataset != "insti_totals" and not (isinstance(rows, dict) and rows):
-            self.log(f"  {what}：沒有任何一檔的資料，先不存")
+            self.wrong_answer(task, what, "沒有任何一檔的資料")
             return
         self.store.save(dataset, market, d, parsed)
+        self.misses.pop(_key(task), None)
+        self.streak[(dataset, market)] = 0
         self.saved.append(f"{dataset}/{market}/{d:%Y%m%d}")
         self.log(f"  {what}：{len(rows)} 檔" if rows else f"  {what}：完成")
 
+    def no_data(self, task, what) -> None:
+        """交易所說那天沒有資料。今天的是還沒公布；過去的日子要看那天有沒有開盤。"""
+        dataset, market, d = task
+        if d >= self.today:
+            self.not_yet.add(task)
+            self.log(f"  {what}：還沒有資料")
+            return
+        n = self.record_miss(task)
+        if dataset == "quotes" and not self.store.has("quotes", OTHER[market], d):
+            self.log(f"  {what}：沒有資料")       # 可能是休市：兩個市場都說沒有才算（settle_holidays）
+            return
+        self.suspicious(task, what, "沒有資料，但那天有開盤", n)
+
+    def wrong_answer(self, task, what, why) -> None:
+        """回應的日期不對或一檔都沒有：多半是網站改了，這類資料這次先不抓（不會一直重問）。"""
+        dataset, market, d = task
+        if d >= self.today:      # 今天的還沒公布時，可能回前一天的資料
+            self.not_yet.add(task)
+            self.log(f"  {what}：{why}，應該是還沒公布，先不存")
+            return
+        n = self.record_miss(task)
+        self.broken.add((dataset, market))
+        self.error(f"{what}：{why}，先不存{self.retry_text(n)}；這類資料這次先不抓")
+
+    def suspicious(self, task, what, why, n) -> None:
+        dataset, market, _ = task
+        self.error(f"{what}：{why}{self.retry_text(n)}")
+        self.streak[(dataset, market)] += 1
+        if self.streak[(dataset, market)] >= MISS_STREAK:
+            self.broken.add((dataset, market))
+            self.log(f"  {MARKET_NAMES[market]}{LABELS[dataset]}連續 {MISS_STREAK} 天應該有卻沒有，這次先不抓")
+
+    @staticmethod
+    def retry_text(n: int) -> str:
+        return f"（已經問了 {n} 次，之後一天只再問一次）" if n >= MISS_TRIES else ""
+
     def settle_holidays(self) -> None:
-        """過去某個平日沒有行情：另一個市場也沒有（或這次沒問到）才當成休市。
-        連線失敗、被封鎖不算「沒有」，所以不會因為網路問題記錯。"""
-        for d, markets in sorted(self.no_quotes.items()):
-            if any(self.store.has("quotes", m, d) for m in MARKETS):
-                self.log(f"  {d}：{'、'.join(MARKET_NAMES[m] for m in sorted(markets))}沒有行情，"
-                         "但另一個市場有，先不當成休市")
+        """過去某個平日兩個市場都說沒有行情（這次或之前問的都算），就記成休市。
+        只有一個市場說沒有時先等另一個市場；連線失敗、被封鎖不算「沒有」，所以不會因為網路問題記錯。"""
+        days: dict[date, set] = {}
+        for k in self.misses:
+            t = _from_key(k)
+            if t and t[0] == "quotes":
+                days.setdefault(t[2], set()).add(t[1])
+        for d, markets in sorted(days.items()):
+            if markets != set(MARKETS) or d in self.closed or any(self.store.has("quotes", m, d) for m in MARKETS):
                 continue
             self.closed.add(d)
             self.closed_added.append(d.isoformat())
             self.store.add_closed([d])
+            for m in MARKETS:
+                self.misses.pop(_key(("quotes", m, d)), None)
             self.log(f"  {d} 沒有開盤（休市），記下來以後不再抓")
-        self.no_quotes.clear()
 
-    def save_index(self, d: date, parsed, what) -> None:
-        if not isinstance(parsed, dict):
-            self.log(f"  {what}：還沒有資料")
-            return
+    def save_index(self, task, parsed, what) -> None:
+        d = task[2]
         month = f"{d:%Y-%m}-"
         rows = {k: v for k, v in parsed.items() if isinstance(k, str) and k.startswith(month)
-                and isinstance(v, dict)}
+                and isinstance(v, dict)} if isinstance(parsed, dict) else {}
         if rows:
             self.store.save_otc_index(d.year, d.month, {**self.store.otc_index(d.year, d.month), **rows})
             self.saved.append(f"otc_index/{d:%Y%m}")
-        self.log(f"  {what} {d:%Y-%m}：{len(rows)} 天" + ("" if d.isoformat() in rows else f"（還沒有 {d}）"))
+        if d.isoformat() in rows:
+            self.misses.pop(_key(task), None)
+            self.log(f"  {what} {d:%Y-%m}：{len(rows)} 天")
+        elif d >= self.today:
+            self.log(f"  {what} {d:%Y-%m}：{len(rows)} 天（還沒有 {d}）")
+        else:
+            self.suspicious(task, what, f"沒有 {d} 的，但那天有開盤", self.record_miss(task))
+
+    def confirmed(self) -> bool:
+        """這次確認了行情是最新的：兩個市場最新一天的行情都有了，或交易所說今天的還沒有。"""
+        d = self.latest("quotes")
+        return all(self.store.has("quotes", m, d) or ("quotes", m, d) in self.not_yet for m in MARKETS)
 
     def save_industry(self, market: str, parsed, what) -> None:
         if not isinstance(parsed, dict) or not parsed:
@@ -355,15 +458,30 @@ class _Updater:
         self.run(tasks)
 
     def prune(self) -> None:
-        """刪掉用不到的舊檔，快取才不會一直變大。"""
-        def start(dataset, n):
+        """刪掉用不到的舊檔，快取才不會一直變大。
+        本益比、三大法人買賣金額只用最新一天（不往回補），留 CHIPS_MAX_DAYS 個交易日就好。"""
+        def start(dataset, n, extra=KEEP_EXTRA_DAYS):
             days = trading_days(self.latest(dataset), n, self.closed)
-            return days[-1] - timedelta(days=KEEP_EXTRA_DAYS)
+            return days[-1] - timedelta(days=extra)
         for m in MARKETS:
             self.store.prune("quotes", m, start("quotes", contract.HIST_MAX_DAYS))
-            for ds in ("insti", "margin", "valuation", "insti_totals"):
+            for ds in ("insti", "margin"):
                 self.store.prune(ds, m, start(ds, contract.CHIPS_MAX_DAYS))
+            for ds in ("valuation", "insti_totals"):
+                self.store.prune(ds, m, start(ds, contract.CHIPS_MAX_DAYS, extra=0))
         self.store.prune_otc_index(self.latest("quotes") - timedelta(days=62))
+        keep = {"quotes": start("quotes", contract.HIST_MAX_DAYS)}
+        chips = start("insti", contract.CHIPS_MAX_DAYS)
+        for k in list(self.misses):
+            t = _from_key(k)
+            if t is None or t[2] < keep.get(t[0], chips) or (t[0] == "quotes" and t[2] in self.closed):
+                del self.misses[k]
+
+    def save_status(self) -> None:
+        """記下這次確認資料是最新的時間（確認不了就沿用上一次的），和應該有卻沒有的紀錄。"""
+        if self.confirmed():
+            self.checked_utc = self.now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.store.save_status({"checked_utc": self.checked_utc, "missing": dict(sorted(self.misses.items()))})
 
 
 def update(cache, client, now: datetime | None = None, max_per_host: int = 25, deadline_s: float = 240,
@@ -383,9 +501,13 @@ def update(cache, client, now: datetime | None = None, max_per_host: int = 25, d
             break
         phase()
     u.prune()
+    u.save_status()
+    confirmed = u.confirmed()
     history_days = min(len(store.dates("quotes", "tse")), contract.HIST_MAX_DAYS)
     hosts = "、".join(f"{HOST_NAMES.get(h, h)} {n} 次" for h, n in u.requests.items()) or "沒有連線"
     log(f"台股資料：{hosts}，新存 {len(u.saved)} 個檔，歷史 K 線 {history_days} 天"
-        + (f"，{len(u.errors)} 個錯誤" if u.errors else ""))
+        + (f"，{len(u.errors)} 個錯誤" if u.errors else "")
+        + ("" if confirmed else "；最新的行情這次沒抓到"))
     return {"requests": dict(u.requests), "saved": u.saved, "errors": u.errors,
-            "closed_added": u.closed_added, "history_days": history_days, "timed_out": u.timed_out}
+            "closed_added": u.closed_added, "history_days": history_days, "timed_out": u.timed_out,
+            "confirmed": confirmed, "changed": store.changed}

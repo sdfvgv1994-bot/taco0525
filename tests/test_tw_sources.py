@@ -88,7 +88,9 @@ def test_signed_change(sign, diff, expect):
 
 
 @pytest.mark.parametrize("code,kind", [("2330", "stock"), ("9105", "stock"), ("0050", "etf"), ("00878", "etf"),
-                                       ("00631L", "etf"), ("00625K", "etf"), ("006201", "etf"), ("00679B", "etf"),
+                                       ("00631L", "etf"), ("006201", "etf"), ("00679B", "etf"), ("00981A", "etf"),
+                                       # 外幣 ETF（第 6 碼 K、M、S、C）：價格、金額是外幣，不收
+                                       ("00625K", None), ("00636K", None), ("00687C", None),
                                        ("2881A", None), ("910322", None), ("01001T", None), ("020000", None),
                                        ("72479U", None), ("8349A", None)])
 def test_classify_codes_seen_in_data(code, kind):
@@ -145,9 +147,12 @@ def test_twse_quotes():
 
 
 def test_twse_quotes_untraded():
-    r = S.parse_twse_quotes(fx("twse_quotes_20261008.json"))["rows"]
-    assert r["00625K"] == {"name": "富邦上証+R", "open": None, "high": None, "low": None, "close": None,
-                           "change": None, "volume": 0, "value": 0, "trades": 0, "pe": None}
+    js = fx("twse_quotes_20261008.json")
+    t = next(t for t in js["tables"] if "每日收盤行情" in str(t.get("title")))
+    next(r for r in t["data"] if r[0] == "00625K")[0] = "00999"     # 借外幣 ETF 那列（整天沒成交）來測
+    r = S.parse_twse_quotes(js)["rows"]
+    assert r["00999"] == {"name": "富邦上証+R", "open": None, "high": None, "low": None, "close": None,
+                          "change": None, "volume": 0, "value": 0, "trades": 0, "pe": None}
     # 只有零股成交 300 股：收盤是 '--'，成交量 0 張，但成交金額照實記
     assert r["4581"]["close"] is None and r["4581"]["change"] is None
     assert pick(r["4581"], "volume", "value", "trades", "pe") == (0, 14639, 2, 11.81)
@@ -155,8 +160,8 @@ def test_twse_quotes_untraded():
 
 def test_twse_quotes_filters_other_products():
     r = S.parse_twse_quotes(fx("twse_quotes_20261008.json"))["rows"]
-    assert set(r) == {"0050", "00400A", "00625K", "00631L", "00878", "1101", "1103", "1341", "2317", "2330",
-                      "4581", "9105"}
+    assert set(r) == {"0050", "00400A", "00631L", "00878", "1101", "1103", "1341", "2317", "2330",
+                      "4581", "9105"}                                     # 00625K 外幣 ETF 不收
     assert {classify(c) for c in r} == {"stock", "etf"}
 
 

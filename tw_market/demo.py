@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from tw_market import site
-from tw_market.contract import CHIPS_MAX_DAYS, HIST_MAX_DAYS, INDUSTRIES, classify
+from tw_market.contract import CHIPS_MAX_DAYS, HIST_MAX_DAYS, INDUSTRIES, classify, limit_of, limit_prices
 
 # 一些真實的名稱，讓畫面看起來像真的（價格、成交量都是假的）
 KNOWN = [
@@ -83,8 +83,14 @@ def dataset(today: date | None = None) -> tuple[dict, list[dict], dict]:
     for code, name, market, ind in _universe():
         df = _series(code, days)
         rng = _rng(code + "chips")
-        last, prev = df.iloc[-1], df.iloc[-2]
         kind = classify(code)
+        lim = limit_prices(float(df.close.iloc[-2]))
+        if kind == "stock" and lim and _rng(code + "limit").random() < 0.03:   # 少數幾檔漲停、跌停
+            c = lim[0] if _rng(code + "up").random() < 0.6 else lim[1]
+            df.iloc[-1, df.columns.get_loc("close")] = c
+            df.iloc[-1, df.columns.get_loc("high")] = max(c, float(df.high.iloc[-1]))
+            df.iloc[-1, df.columns.get_loc("low")] = min(c, float(df.low.iloc[-1]))
+        last, prev = df.iloc[-1], df.iloc[-2]
         change = round(float(last.close - prev.close), 2)
         f, t, dl = (int(x) for x in rng.normal(0, [800, 120, 200]).round())
         mb = int(rng.integers(0, 40000))
@@ -102,6 +108,7 @@ def dataset(today: date | None = None) -> tuple[dict, list[dict], dict]:
             "foreign": f, "trust": t, "dealer": dl, "inst_total": f + t + dl,
             "margin_balance": mb, "margin_change": int(rng.normal(0, mb * 0.02 + 1)),
             "short_balance": int(mb * rng.uniform(0, 0.2)), "short_change": int(rng.normal(0, 30)),
+            "limit": limit_of(float(last.close), change) if kind == "stock" else None,
         })
         chip_days = [f"{x:%Y-%m-%d}" for x in days[-CHIPS_MAX_DAYS:]]
         hists[code] = {
@@ -127,8 +134,7 @@ def dataset(today: date | None = None) -> tuple[dict, list[dict], dict]:
                 "value": sum(s["value"] for s in rows), "volume": sum(s["volume"] for s in rows),
                 "up": sum(s["change"] > 0 for s in st), "down": sum(s["change"] < 0 for s in st),
                 "flat": sum(s["change"] == 0 for s in st),
-                "limit_up": sum(s["change_pct"] >= 9.5 for s in st),
-                "limit_down": sum(s["change_pct"] <= -9.5 for s in st)}
+                "limit_up": sum(s["limit"] == 1 for s in st), "limit_down": sum(s["limit"] == -1 for s in st)}
 
     summary = {
         "date": d, "updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

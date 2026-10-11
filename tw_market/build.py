@@ -6,20 +6,24 @@
 
 GitHub Actions 每 15 分鐘執行一次（.github/workflows/board.yml）。快取裡完全沒有行情時，
 只放網頁本身（網頁會顯示「台股資料還沒產生」）。資料格式檢查不通過就報錯，不更新網頁。
+抓資料那步失敗時改用 --no-fetch --fetch-failed：用快取產生，網頁上註明這次抓資料失敗。
+在 GitHub Actions 裡快取有變動時會輸出 changed=true（決定要不要存快取）。
 """
 from __future__ import annotations
 
 import argparse
 import math
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from tw_market import contract, site
 from tw_market.contract import MARKETS, STOCK_FIELDS, classify
 from tw_market.store import DEFAULT_DIR, Store
-from tw_market.update import PUBLISH, taipei, update
+from tw_market.update import PUBLISH, latest_day, taipei, update
 
-LIMIT_PCT = 9.5               # 漲跌幅超過這個當作漲停 / 跌停
+ZERO_INSTI = {"foreign": 0, "trust": 0, "dealer": 0, "total": 0}
+FETCH_FAILED = "這次抓資料失敗，顯示的是之前抓到的資料"
 LATE = {"insti": ("三大法人", "下午 3 點半後"), "margin": ("融資融券", "晚上 9 點後"),
         "valuation": ("本益比、殖利率", "下午 3 點後")}
 
@@ -72,7 +76,9 @@ def _newest(store: Store, dataset: str, market: str, upto: date, since: date | N
 
 # ---------------------------------------------------------------- 組合資料
 def _stock(code, q, market, industry, val, ins, mar) -> dict:
+    """ins 是 None 表示那天的法人資料整個沒有；有資料但沒有這檔，傳進來的是 0（沒有法人買賣）。"""
     kind = classify(code)
+    ins = ins or {}
     close, change = _n(q.get("close")), _n(q.get("change"))
     pe = _n(q.get("pe"))
     if pe is None or pe <= 0:
@@ -89,18 +95,24 @@ def _stock(code, q, market, industry, val, ins, mar) -> dict:
         "inst_total": _i(ins.get("total")),
         "margin_balance": _i(mar.get("margin_balance")), "margin_change": _i(mar.get("margin_change")),
         "short_balance": _i(mar.get("short_balance")), "short_change": _i(mar.get("short_change")),
+        "limit": contract.limit_of(close, change) if kind == "stock" else None,
     }
 
 
+def _is_dr(s: dict) -> bool:
+    """存託憑證（例如 9105 泰金寶-DR）：證交所的漲跌家數不算它們。"""
+    return s["industry"] == "存託憑證" or s["name"].upper().endswith("-DR")
+
+
 def _market(mk: str, rows: list[dict], quotes, index) -> dict:
+    """漲跌、漲停跌停家數只算股票（不含 ETF、存託憑證），和證交所公布的股票家數一致。"""
     out = {"name": MARKETS[mk], "index": index, "value": None, "volume": None,
            "up": None, "down": None, "flat": None, "limit_up": None, "limit_down": None}
     if not rows:
         return out
     totals = (quotes or {}).get("totals") or {}
-    st = [r for r in rows if r["type"] == "stock"]
+    st = [r for r in rows if r["type"] == "stock" and not _is_dr(r)]
     chg = [r for r in st if r["change"] is not None]
-    pct = [r["change_pct"] for r in st if r["change_pct"] is not None]
     out.update({
         "value": _i(totals.get("value")) if _i(totals.get("value")) is not None
         else sum(r["value"] or 0 for r in rows),
@@ -108,7 +120,7 @@ def _market(mk: str, rows: list[dict], quotes, index) -> dict:
         else sum(r["volume"] or 0 for r in rows),
         "up": sum(r["change"] > 0 for r in chg), "down": sum(r["change"] < 0 for r in chg),
         "flat": sum(r["change"] == 0 for r in chg),
-        "limit_up": sum(p >= LIMIT_PCT for p in pct), "limit_down": sum(p <= -LIMIT_PCT for p in pct),
+        "limit_up": sum(r["limit"] == 1 for r in st), "limit_down": sum(r["limit"] == -1 for r in st),
     })
     return out
 
@@ -163,17 +175,19 @@ def _hist_window(store: Store, latest: date) -> list[date]:
     return sorted(d for d in days if d <= latest)[-contract.HIST_MAX_DAYS:]
 
 
-def _hists(store: Store, window: list[date], names: dict) -> tuple[dict, int]:
+def _hists(store: Store, window: list[date], names: dict) -> tuple[dict, int, dict]:
     """個股歷史 K 線：一天一天讀（不一次全部載入，省記憶體），只留有收盤價的日子。
-    回傳 (歷史, 讀得到的天數)。"""
+    回傳 (歷史, 讀得到的天數, 各市場讀得到的天數)。"""
     cols = ("open", "high", "low", "close", "volume")
     acc: dict[str, dict] = {}
-    days = 0
+    days, per_market = 0, {mk: 0 for mk in MARKETS}
     for d in window:
         iso = d.isoformat()
         seen = set()
         maps = [_rows(store.load("quotes", mk, d)) for mk in ("tse", "otc")]
         days += any(maps)
+        for mk, rows in zip(("tse", "otc"), maps):
+            per_market[mk] += bool(rows)
         for rows in maps:
             for code, r in rows.items():
                 if code in seen or code not in names or not isinstance(r, dict):
@@ -189,11 +203,13 @@ def _hists(store: Store, window: list[date], names: dict) -> tuple[dict, int]:
                 h["close"].append(close)
                 h["volume"].append(_i(r.get("volume")))
     return {code: {"code": code, "name": names[code], **h, "inst": None, "margin": None}
-            for code, h in acc.items()}, days
+            for code, h in acc.items()}, days, per_market
 
 
-def _chips(store: Store, dataset: str, cols: tuple, latest: date, hists: dict) -> None:
-    """最近 CHIPS_MAX_DAYS 天的法人或融資融券，放進每檔的歷史；完全沒有就是 null。"""
+def _chips(store: Store, dataset: str, cols: tuple, latest: date, hists: dict, markets: dict) -> None:
+    """最近 CHIPS_MAX_DAYS 天的法人或融資融券，放進每檔的歷史；完全沒有就是 null。
+    法人：那天那個市場有資料、這檔那天有成交卻不在名單上 = 沒有法人買賣，記 0
+    （融資融券不在名單上是「不能信用交易」，維持 null）。"""
     days = sorted(set(store.dates(dataset, "tse")) | set(store.dates(dataset, "otc")))
     loaded = []
     for d in reversed([d for d in days if d <= latest]):
@@ -206,18 +222,40 @@ def _chips(store: Store, dataset: str, cols: tuple, latest: date, hists: dict) -
     key = "inst" if dataset == "insti" else "margin"
     for code, h in hists.items():
         vals = {c: [] for c in cols}
-        for _, (tse, otc) in loaded:
+        traded = set(h["dates"])
+        for iso, (tse, otc) in loaded:
             r = tse.get(code) or otc.get(code)
+            if r is None and key == "inst" and iso in traded and (tse if markets.get(code) == "tse" else otc):
+                r = ZERO_INSTI
             for c in cols:
                 vals[c].append(_i(r.get(c)) if isinstance(r, dict) else None)
         if any(v is not None for c in cols for v in vals[c]):
             h[key] = {"dates": [iso for iso, _ in loaded], **vals}
 
 
-def assemble(store: Store, now: datetime | None = None, log=print):
-    """快取 → (summary, stocks, hists)；快取裡完全沒有行情時回傳 None。"""
+def _checked(store: Store) -> datetime | None:
+    """上一次確認資料是最新的時間（update 記在 status.json）。"""
+    try:
+        return datetime.fromisoformat(store.status()["checked_utc"].replace("Z", "+00:00"))
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return None
+
+
+def _stale_note(store: Store, latest: date, now: datetime, checked: datetime | None) -> str | None:
+    """現在應該要有的行情（due）比顯示的新，而且上一次確認是在 due 公布之前 → 說明還沒抓到。
+    交易所還沒公布、或平日休市還沒發現時，那次執行已經確認過，不會誤報。"""
+    closed = store.closed()
+    due = latest_day("quotes", now, closed)
+    if latest >= due or (checked and latest_day("quotes", checked, closed) >= due):
+        return None
+    return f"行情還沒抓到 {_md(due)} 的，先顯示 {_md(latest)} 的"
+
+
+def assemble(store: Store, now: datetime | None = None, log=print, fetch_failed: bool = False):
+    """快取 → (summary, stocks, hists)；快取裡完全沒有行情時回傳 None。
+    fetch_failed：這次抓資料失敗（GitHub Actions 改用快取重新產生），網頁上註明。"""
     now = taipei(now)
-    notes = []
+    notes = [FETCH_FAILED] if fetch_failed else []
     tse_d, tse_q = _newest(store, "quotes", "tse", date.max)
     if tse_d is None:
         otc_d, otc_q = _newest(store, "quotes", "otc", date.max)
@@ -235,6 +273,11 @@ def assemble(store: Store, now: datetime | None = None, log=print):
             notes.append("上櫃行情還沒抓到，目前只有上市股票")
         elif otc_d < latest:
             notes.append(f"上櫃行情是 {_md(otc_d)} 的（{_md(latest)} 的還沒抓到）")
+    checked = _checked(store)
+    stale = _stale_note(store, max(store.dates("quotes", "tse")[-1:] + store.dates("quotes", "otc")[-1:]),
+                        now, checked)
+    if stale and not any(n.startswith("上市行情還沒抓到") for n in notes):
+        notes.insert(int(fetch_failed), stale)
     quotes = {"tse": tse_q, "otc": otc_q}
     window = _hist_window(store, latest)
     since = window[-contract.CHIPS_MAX_DAYS:][0]      # 太舊的籌碼資料不拿來當最新的
@@ -259,7 +302,8 @@ def assemble(store: Store, now: datetime | None = None, log=print):
             if classify(code) is None or not isinstance(rows[code], dict) or code in seen:
                 continue
             seen.add(code)
-            val, ins, mar = (extra[(ds, mk)].get(code) or {} for ds in ("valuation", "insti", "margin"))
+            val, mar = (extra[(ds, mk)].get(code) or {} for ds in ("valuation", "margin"))
+            ins = extra[("insti", mk)].get(code) or (ZERO_INSTI if extra[("insti", mk)] else None)
             stocks.append(_stock(code, rows[code], mk, imap.get(code) or other.get(code), val, ins, mar))
     by_market = {mk: [s for s in stocks if s["market"] == mk] for mk in MARKETS}
     with_rows = [mk for mk in MARKETS if by_market[mk]]
@@ -274,15 +318,19 @@ def assemble(store: Store, now: datetime | None = None, log=print):
                          "tse": {k: _n(tot.get(k)) for k in ("foreign", "trust", "dealer", "total")}}
         notes.append("三大法人買賣金額只有上市（上櫃暫不提供）")
 
-    hists, history_days = _hists(store, window, {s["code"]: s["name"] for s in stocks})
-    _chips(store, "insti", ("foreign", "trust", "dealer"), latest, hists)
-    _chips(store, "margin", ("margin_balance", "short_balance"), latest, hists)
+    hists, history_days, per_market = _hists(store, window, {s["code"]: s["name"] for s in stocks})
+    markets = {s["code"]: s["market"] for s in stocks}
+    _chips(store, "insti", ("foreign", "trust", "dealer"), latest, hists, markets)
+    _chips(store, "margin", ("margin_balance", "short_balance"), latest, hists, markets)
     if history_days < contract.HIST_MAX_DAYS:
         notes.append(f"歷史 K 線還在補齊中（目前 {history_days} 天）")
+    for mk in with_rows:      # 一個市場一直補不到（例如網站改了），另一個市場已經補齊
+        if per_market[mk] < history_days - 5:
+            notes.append(f"{MARKETS[mk]}的歷史 K 線還在補齊中（目前 {per_market[mk]} 天）")
 
     summary = {
         "date": latest.isoformat(),
-        "updated_utc": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "updated_utc": (checked or now).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "markets": {"tse": _market("tse", by_market["tse"], tse_q, _tse_index(tse_q)),
                     "otc": _market("otc", by_market["otc"], otc_q, _otc_index(store, otc_d))},
         "institutional": institutional,
@@ -305,21 +353,22 @@ def validate(summary: dict, stocks: list[dict], hists: dict) -> list[str]:
 
 # ---------------------------------------------------------------- 產生網站
 def build(out, cache_dir=DEFAULT_DIR, now: datetime | None = None, client=None, fetch: bool = True,
-          demo: bool = False, log=print, **update_kwargs) -> dict:
-    """產生 out 資料夾。fetch=False 時完全不連網，只用快取。回傳簡單的統計。"""
+          demo: bool = False, log=print, fetch_failed: bool = False, on_change=None, **update_kwargs) -> dict:
+    """產生 out 資料夾。fetch=False 時完全不連網，只用快取。回傳簡單的統計。
+    on_change：快取第一次有變動時呼叫（GitHub Actions 用來決定要不要存快取）。"""
     out, now = Path(out), taipei(now)
     stats = None
     if demo:
         from tw_market import demo as demo_data
         summary, stocks, hists = demo_data.dataset(now.date())
     else:
-        store = Store(cache_dir)
+        store = Store(cache_dir, on_change=on_change)
         if fetch:
             if client is None:
                 from common.twse import TwseClient
                 client = TwseClient()
             stats = update(store, client, now, log=log, **update_kwargs)
-        data = assemble(store, now, log)
+        data = assemble(store, now, log, fetch_failed=fetch_failed)
         if data is None:
             log("台股：快取裡還沒有任何行情，只放網頁（會顯示「台股資料還沒產生」）")
             site.write_placeholder(out)
@@ -341,16 +390,35 @@ def main(argv=None):
     ap.add_argument("--out", default="_site/tw", help="輸出資料夾（預設 _site/tw）")
     ap.add_argument("--demo", action="store_true", help="示範資料（不連網）")
     ap.add_argument("--no-fetch", action="store_true", help="不連網，只用快取裡的資料重新產生")
+    ap.add_argument("--fetch-failed", action="store_true",
+                    help="抓資料那步失敗了（GitHub Actions 用）：網頁上註明顯示的是之前抓到的資料")
     ap.add_argument("--cache", default=str(DEFAULT_DIR), help="快取資料夾（預設 .cache/tw）")
     ap.add_argument("--max-per-host", type=int, default=25, help="每個網站最多連幾次（預設 25）")
     ap.add_argument("--deadline", type=float, default=240, help="抓資料最多幾秒（預設 240）")
     a = ap.parse_args(argv)
     r = build(Path(a.out), cache_dir=Path(a.cache), fetch=not a.no_fetch, demo=a.demo,
+              fetch_failed=a.fetch_failed, on_change=_github_output("changed", "true"),
               max_per_host=a.max_per_host, deadline_s=a.deadline)
+    errors = (r.get("update") or {}).get("errors") or []
+    if errors and os.environ.get("GITHUB_ACTIONS"):
+        print(f"::warning::台股資料：{len(errors)} 個錯誤（詳細看上面有 ⚠ 的行）")
     if r["date"]:
         print(f"台股總覽完成：{r['date']}，{r['stocks']} 檔、{r['hists']} 檔歷史，輸出到 {a.out}")
     else:
         print(f"台股總覽：還沒有資料，只放網頁到 {a.out}")
+
+
+def _github_output(key: str, value: str):
+    """在 GitHub Actions 裡回傳一個函式：呼叫時把 key=value 寫進這一步的輸出（steps.<id>.outputs.key）。
+    快取一有變動就寫（不等程式結束），中途出錯或被停掉也會存到已經抓到的資料。"""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
+        return None
+
+    def write():
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{key}={value}\n")
+    return write
 
 
 if __name__ == "__main__":

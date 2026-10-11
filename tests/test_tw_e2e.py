@@ -134,8 +134,9 @@ def test_saturday_after_holiday(tmp_path):
     assert (otc["value"], otc["volume"]) == (256_231_761_006, 1_105_739)
     for m in (tse, otc):
         assert all(isinstance(m[k], int) for k in ("up", "down", "flat", "limit_up", "limit_down"))
-    # 上市股票：1101 漲、1103 平、2317 / 2330 / 9105 跌；1341 不比價、4581 沒成交不算
-    assert (tse["up"], tse["down"], tse["flat"]) == (1, 3, 1)
+    # 上市股票：1101 漲、1103 平、2317 / 2330 跌；1341 不比價、4581 沒成交、9105 存託憑證不算
+    assert (tse["up"], tse["down"], tse["flat"]) == (1, 2, 1)
+    assert (tse["limit_up"], tse["limit_down"]) == (0, 0)
     # 上櫃股票：5483 / 6488 跌、8299 平；2073 沒成交不算
     assert (otc["up"], otc["down"], otc["flat"]) == (0, 2, 1)
     assert summary["institutional"] == {
@@ -151,13 +152,13 @@ def test_saturday_after_holiday(tmp_path):
         "close": 2550.0, "change": -35.0, "change_pct": -1.35, "open": 2550.0, "high": 2575.0, "low": 2550.0,
         "volume": 23145, "value": 59_167_379_273, "pe": 29.56, "dividend_yield": 0.86, "pb": 10.28,
         "foreign": -12303, "trust": 793, "dealer": 510, "inst_total": -11000,
-        "margin_balance": 31586, "margin_change": 1308, "short_balance": 45, "short_change": -5}
+        "margin_balance": 31586, "margin_change": 1308, "short_balance": 45, "short_change": -5, "limit": 0}
     assert rows["6488"] == {
         "code": "6488", "name": "環球晶", "market": "otc", "type": "stock", "industry": "半導體業",
         "close": 1130.0, "change": -85.0, "change_pct": -7.0, "open": 1180.0, "high": 1195.0, "low": 1095.0,
         "volume": 20608, "value": 23_258_740_205, "pe": 54.85, "dividend_yield": 0.68, "pb": 5.59,
         "foreign": -1301, "trust": -989, "dealer": 4, "inst_total": -2286,
-        "margin_balance": 17036, "margin_change": -933, "short_balance": 500, "short_change": -65}
+        "margin_balance": 17036, "margin_change": -933, "short_balance": 500, "short_change": -65, "limit": 0}
     assert rows["0050"]["type"] == "etf" and rows["0050"]["industry"] == "ETF"
     assert rows["006201"]["market"] == "otc" and rows["006201"]["type"] == "etf"
     assert rows["1341"]["change"] is None and rows["1341"]["change_pct"] is None   # 不比價
