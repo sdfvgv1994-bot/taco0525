@@ -65,6 +65,7 @@ h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: .02em; }
   padding: 6px 10px; cursor: pointer; white-space: nowrap;
 }
 .btn:hover { background: var(--surface-2); }
+a.btn { color: var(--ink); text-decoration: none; }
 .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .demo-badge { background: #fab219; color: #0b0b0b; border-radius: 6px; padding: 1px 8px; font-size: 12px; }
 
@@ -693,10 +694,11 @@ function showUpdated() {
     (!err && mins > 90 ? "　⚠ 雲端更新可能暫停了" : "");
 }
 if (STATIC) {
-  // 雲端版：加上「我的看盤」的連結
+  // 雲端版：加上「我的看盤」、「台股總覽」的連結（本機版沒有這兩個頁面）
   const link = el("a", { class: "btn", href: "monitor/" }, "📈 我的看盤");
   link.style.textDecoration = "none";
-  $("colorBtn").before(link);
+  const twLink = el("a", { class: "btn", href: "tw/" }, "🇹🇼 台股總覽");
+  $("colorBtn").before(link, twLink);
   $("note").textContent = "雲端版：GitHub 每 15 分鐘抓一次最新資料（排程偶爾會晚幾分鐘），這個頁面每分鐘自動檢查。" +
     "台灣項目來自台灣證券交易所，其他來自 Yahoo Finance（可能有 15 分鐘以上延遲）。交易時間不含各國國定假日。點卡片可看詳細走勢。";
   document.querySelector("#groups .loading").textContent = "正在載入資料…";

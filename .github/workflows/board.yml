@@ -1,6 +1,7 @@
 # 雲端版全球股市看板＋雲端看盤：GitHub 的雲端機器每 15 分鐘抓一次資料，產生網頁放到 GitHub Pages。
 # 全球看板：https://sdfvgv1994-bot.github.io/taco0525/
 # 雲端看盤：https://sdfvgv1994-bot.github.io/taco0525/monitor/
+# 台股總覽：https://sdfvgv1994-bot.github.io/taco0525/tw/
 #   設定在 cloud_monitor/config.toml；帳戶等資料存在 monitor-data 分支（每次執行後存回去）
 name: 更新雲端看板
 
@@ -15,6 +16,7 @@ on:
       - "common/**"
       - "cloud_monitor/**"
       - "stock_monitor/**"
+      - "tw_market/**"
       - ".github/workflows/board.yml"
 
 permissions:
@@ -54,6 +56,27 @@ jobs:
           path: .cache/board_history
           key: board-history-${{ github.run_id }}
           restore-keys: board-history-
+
+      # 台股總覽的每日資料（行情、法人、融資融券）：過去的日子存了就不再抓，第一天要分好幾次補齊。
+      # 這裡只取出；有新資料才存（後面的「存台股總覽的快取」），不然每 15 分鐘存一份 20 多 MB，
+      # 幾天就把 GitHub 的快取空間用完。
+      # 路徑要寫 .cache/tw/*（不是 .cache/tw）：寫資料夾的話整個資料夾都會打包，排除 status.json 那行沒有作用。
+      # 這兩行要和「存台股總覽的快取」一字不差（快取的版本是用這幾行算的，不一樣就取不出來）
+      - name: 取出台股總覽的快取
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .cache/tw/*
+            !.cache/tw/status.json
+          key: tw-data-${{ github.run_id }}
+          restore-keys: tw-data-
+
+      # 台股總覽抓資料的紀錄（最後一次確認資料是最新的時間等，很小）：每次都存
+      - uses: actions/cache@v4
+        with:
+          path: .cache/tw/status.json
+          key: tw-status-${{ github.run_id }}
+          restore-keys: tw-status-
 
       - name: 產生看板網頁
         run: python world_market/build_static.py --out _site
@@ -108,6 +131,35 @@ jobs:
           python cloud_monitor/keep_last.py --out _site/monitor
           --state "${{ steps.state.outcome }}" --monitor "${{ steps.monitor.outcome }}"
           --save "${{ steps.save.outcome }}"
+
+      # ---------------- 台股總覽（出錯也不影響其他網頁發佈） ----------------
+      # 每次最多連每個網站 25 次、抓 4 分鐘，抓不完的下次繼續。
+      # exec：超時的時候 GitHub 只對這一步的 shell 送停止訊號，沒有 exec 的話 python 會留在背景繼續跑，
+      # 和後面「用快取的資料重新產生」、存快取、上傳網頁同時改同一批檔案
+      - name: 產生台股總覽
+        id: tw
+        continue-on-error: true
+        timeout-minutes: 12
+        run: exec python -m tw_market.build --out _site/tw
+
+      # 抓資料出錯或超時：不連網，只用快取裡已經有的資料重新產生（網頁上註明這次抓資料失敗），
+      # /tw/ 不會變成 404
+      - name: 台股總覽沒成功時，用快取的資料重新產生
+        id: tw_cached
+        if: steps.tw.outcome != 'success'
+        continue-on-error: true
+        run: python -m tw_market.build --out _site/tw --no-fetch --fetch-failed
+
+      # 快取有變動（新抓到資料、記下休市日、清掉舊檔）才存；中途出錯也會存已經抓到的
+      - name: 存台股總覽的快取
+        if: steps.tw.outputs.changed == 'true' || steps.tw_cached.outputs.changed == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .cache/tw/*
+            !.cache/tw/status.json
+          key: tw-data-${{ github.run_id }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

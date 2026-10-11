@@ -5,15 +5,21 @@
 tw/data/summary.json   大盤摘要
     {
       "date": "2026-10-08",                 最新一個有收盤資料的交易日
-      "updated_utc": "2026-10-10T11:40:00Z",
+      "updated_utc": "2026-10-10T11:40:00Z",  最後一次確認資料是最新的時間（任一個市場確認了就算；
+                                              兩個市場都抓不到時不會往前走）
       "markets": {
         "tse": {                            上市（otc = 上櫃，格式相同）
           "name": "上市",
+          "date": "2026-10-08" 或 null,        這個市場的行情日期（另一個市場晚公布或抓不到時，可能比上面的 date 舊）
+          "chips_date": "2026-10-08" 或 null,   這個市場的個股三大法人日期（下面三個也是這個市場自己的）
+          "margin_date": "2026-10-08" 或 null,
+          "valuation_date": "2026-10-08" 或 null,
           "index": {"name": "加權指數", "close": 49313.44, "change": -492.93, "change_pct": -0.99} 或 null,
           "value": 512345678901,            成交金額（元）
           "volume": 1234567,                成交量（張）
-          "up": 400, "down": 500, "flat": 100,       漲跌家數（只算股票，不含 ETF）
-          "limit_up": 5, "limit_down": 2             漲停、跌停家數
+          "up": 400, "down": 500, "flat": 100,       漲跌家數（只算股票，不含 ETF、存託憑證；不比價的不算）
+          "limit_up": 5, "limit_down": 2             漲停、跌停家數（同上；收盤價剛好是漲停 / 跌停價）
+                                                    和證交所公布的「漲跌證券數合計」股票欄一致
         },
         "otc": {...}
       },
@@ -22,16 +28,19 @@ tw/data/summary.json   大盤摘要
         "tse": {"foreign": -1.2e10, "trust": 1.2e9, "dealer": 3e8, "total": -1.07e10},
         "otc": {...} 或 null
       } 或 null,
-      "chips_date": "2026-10-08" 或 null,     個股三大法人資料的日期
+      "chips_date": "2026-10-08" 或 null,     個股三大法人資料的日期（兩個市場比較新的那個）
       "margin_date": "2026-10-08" 或 null,    融資融券資料的日期（晚上才公布，可能比 date 舊）
       "valuation_date": "2026-10-08" 或 null, 本益比、殖利率、淨值比的日期
       "history_days": 120,                  已經有幾天的歷史 K 線
+      "hist_version": "3f2a9c1b7e0d",       歷史檔（hist/*.json）的版本：內容有變（補了歷史、上櫃晚到、補了籌碼）
+                                            就不同，網頁用來決定要不要重新下載
       "notes": ["櫃買中心的資料這次抓不到，沿用上一次的資料"]
     }
 
 tw/data/stocks.json    全部上市櫃股票與 ETF（表格形式，省流量）
     {"date": "2026-10-08", "fields": STOCK_FIELDS, "rows": [[...], ...]}
     每一列的值依 STOCK_FIELDS 的順序；沒有資料的格子是 null。
+    外幣計價的 ETF（代號第 6 碼是 K、M、S、C，例如 00636K）不收：價格、金額都是外幣。
 
 tw/data/hist/<代號>.json   個股歷史（最多 HIST_MAX_DAYS 天，舊 → 新）
     {
@@ -46,6 +55,7 @@ from __future__ import annotations
 
 import math
 import re
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 HIST_MAX_DAYS = 250          # 個股歷史最多保留幾個交易日（約一年）
 CHIPS_MAX_DAYS = 20          # 個股法人、融資融券最多保留幾天
@@ -73,8 +83,10 @@ STOCK_FIELDS = [
     "margin_change",   # 融資增減（張）
     "short_balance",   # 融券餘額（張）
     "short_change",    # 融券增減（張）
+    "limit",           # 1 漲停、-1 跌停、0 都不是；ETF、沒成交、不比價（除權息等）是 null
 ]
 TEXT_FIELDS = {"code", "name", "market", "type", "industry"}
+DATE_KEYS = ("date", "chips_date", "margin_date", "valuation_date")   # summary 和 summary.markets[市場] 都有
 MARKETS = {"tse": "上市", "otc": "上櫃"}
 TYPES = ("stock", "etf")
 
@@ -93,15 +105,52 @@ INDUSTRIES = {
 
 STOCK_CODE = re.compile(r"\d{4}")                 # 一般股票：4 位數字
 ETF_CODE = re.compile(r"00\d{2,4}[A-Z]?")         # ETF：00 開頭，例如 0050、00878、00631L
+FOREIGN_CURRENCY = "KMSC"   # ETF 代號第 6 碼是這些字母：用外幣交易（證交所註明），價格、金額不是台幣
 
 
 def classify(code: str) -> str | None:
-    """代號 → "stock" / "etf"；權證、特別股等其他商品回傳 None（不收錄）。"""
+    """代號 → "stock" / "etf"；權證、特別股、外幣 ETF 等其他商品回傳 None（不收錄）。"""
     if ETF_CODE.fullmatch(code):
-        return "etf"
+        return None if len(code) == 6 and code[5] in FOREIGN_CURRENCY else "etf"
     if STOCK_CODE.fullmatch(code):
         return "stock"
     return None
+
+
+# 股票的升降單位（tick）：價格未滿多少 → 一檔多少元；1000 元以上一檔 5 元
+_TICKS = ((10, Decimal("0.01")), (50, Decimal("0.05")), (100, Decimal("0.1")), (500, Decimal("0.5")),
+          (1000, Decimal("1")))
+
+
+def _tick(p: Decimal) -> Decimal:
+    return next((t for lim, t in _TICKS if p < lim), Decimal("5"))
+
+
+def limit_prices(prev) -> tuple[float, float] | None:
+    """前一天收盤價 → (漲停價, 跌停價)（股票）。
+
+    漲停 = 前一天收盤 × 1.1 往下取到有效價位；跌停 = × 0.9 往上取（價位依那個價格的升降單位）。
+    例如南亞前一天 98.1 → 漲停 107.5（100 元以上一檔 0.5），只漲 9.58% 也是漲停。
+    用十進位計算，不會有小數誤差。"""
+    if not isinstance(prev, (int, float)) or isinstance(prev, bool) or not math.isfinite(prev) or prev <= 0:
+        return None
+    p = Decimal(str(prev))
+    up, down = p * Decimal("1.1"), p * Decimal("0.9")
+    up = (up / _tick(up)).to_integral_value(ROUND_FLOOR) * _tick(up)
+    down = (down / _tick(down)).to_integral_value(ROUND_CEILING) * _tick(down)
+    return float(up), float(down)
+
+
+def limit_of(close, change) -> int | None:
+    """收盤價、漲跌 → 1 漲停、-1 跌停、0 都不是；沒有收盤價或不比價（漲跌是 null）→ None。
+    要剛好等於漲停 / 跌停價才算（沒有漲跌幅限制的新股漲 12% 也不算漲停）。"""
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+               for v in (close, change)):
+        return None
+    lim = limit_prices(float(Decimal(str(close)) - Decimal(str(change))))
+    if lim is None:
+        return None
+    return 1 if close == lim[0] else -1 if close == lim[1] else 0
 
 
 # ---------------------------------------------------------------- 檢查（測試用）
@@ -117,9 +166,11 @@ def check_summary(d: dict) -> list:
     p = []
     if not _date(d.get("date")):
         p.append("date 格式不對")
-    for key in ("chips_date", "margin_date", "valuation_date"):
+    for key in DATE_KEYS[1:]:
         if d.get(key) is not None and not _date(d[key]):
             p.append(f"{key} 格式不對")
+    if not isinstance(d.get("hist_version"), str) or not d["hist_version"]:
+        p.append("hist_version 不是文字")
     for mk, name in MARKETS.items():
         m = (d.get("markets") or {}).get(mk)
         if m is None:
@@ -127,6 +178,11 @@ def check_summary(d: dict) -> list:
             continue
         if m.get("name") != name:
             p.append(f"markets.{mk}.name 應該是 {name}")
+        for key in DATE_KEYS:
+            if m.get(key) is not None and not _date(m[key]):
+                p.append(f"markets.{mk}.{key} 格式不對")
+            if m.get(key) and d.get(key) and m[key] > d[key]:
+                p.append(f"markets.{mk}.{key} 比 {key} 新")
         for k in ("value", "volume", "up", "down", "flat", "limit_up", "limit_down"):
             if not _num_or_none(m.get(k)):
                 p.append(f"markets.{mk}.{k} 不是數字")
@@ -170,6 +226,8 @@ def check_stocks(d: dict) -> list:
         for k in STOCK_FIELDS:
             if k not in TEXT_FIELDS and not _num_or_none(r[k]):
                 p.append(f"{r['code']}.{k} 不是數字")
+        if r["limit"] not in (1, -1, 0, None) or (r["limit"] is not None and r["type"] != "stock"):
+            p.append(f"{r['code']}.limit 只能是 1、-1、0 或 null（ETF 一律 null）")
     return p
 
 

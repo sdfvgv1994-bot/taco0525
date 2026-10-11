@@ -56,6 +56,7 @@ h1 { font-size: 20px; margin: 0; font-weight: 650; }
   display: inline-block;
 }
 .btn:hover { background: var(--surface-2); }
+.links { display: flex; flex-wrap: wrap; gap: 6px; }
 .banner { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
 .banner.error { border: 1px solid currentColor; }
 .banner ul { margin: 4px 0 0; padding-left: 20px; }
@@ -86,6 +87,8 @@ th:first-child, td:first-child { text-align: left; }
 .card { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
 .card .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .card .name { font-weight: 650; }
+.card a.name { color: inherit; text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+.card a.name:hover { text-decoration: underline; }
 .card .price { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .card .meta { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -105,7 +108,17 @@ dl.settings { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; mar
 dl.settings dt { color: var(--muted); }
 dl.settings dd { margin: 0; }
 .foot { color: var(--muted); font-size: 12px; }
-@media (max-width: 560px) { .tile .v { font-size: 18px; } }
+@media (max-width: 560px) {
+  .tile .v { font-size: 18px; }
+  /* 手機：按鈕自己一行、靠左排，字小一點，四個按鈕排得下一行 */
+  .links { flex-basis: 100%; gap: 5px; }
+  .links .btn { padding: 5px 8px; font-size: 13px; }
+}
+@media (max-width: 400px) {
+  .links { gap: 4px; }
+  .links .btn { padding: 5px 6px; }
+  .links .long { display: none; }
+}
 </style>
 </head>
 <body>
@@ -114,9 +127,12 @@ dl.settings dd { margin: 0; }
     <h1>我的雲端看盤</h1>
     <span class="updated" id="updated">載入中…</span>
     <span class="spacer"></span>
-    <a class="btn" href="../">🌏 全球看板</a>
-    <a class="btn" id="editBtn" href="#" target="_blank" rel="noopener">⚙️ 修改設定</a>
-    <button class="btn" id="colorBtn">紅漲綠跌</button>
+    <nav class="links" aria-label="其他頁面與設定">
+      <a class="btn" href="../">🌏 全球看板</a>
+      <a class="btn" href="../tw/">🇹🇼 台股<span class="long">總覽</span></a>
+      <a class="btn" id="editBtn" href="#" target="_blank" rel="noopener">⚙️ 修改設定</a>
+      <button class="btn" id="colorBtn">紅漲綠跌</button>
+    </nav>
   </header>
   <div id="banner"></div>
   <ul class="notes" id="notes"></ul>
@@ -315,10 +331,19 @@ function render() {
   for (const [k, v] of rows) dl.append(el("dt", {}, k), el("dd", {}, v));
 }
 
+// 台股個股（4～6 碼，可能帶 .TW / .TWO；不含 ^TWII 這類指數）→ 台股總覽的代號
+function twCode(w) {
+  const m = w.tw && /^(\d{4,6}[A-Z]?)(\.TWO?)?$/i.exec(String(w.code || "").trim());
+  return m ? m[1].toUpperCase() : null;
+}
+
 function watchCard(w) {
   const c = el("div", { class: "card" });
   const top = el("div", { class: "top" });
-  top.append(el("span", { class: "name" }, `${w.name || w.code}`), el("span", { class: "meta" }, w.name ? w.code : ""));
+  const tw = twCode(w);
+  const name = tw ? el("a", { class: "name", href: `../tw/#${tw}`, title: "在台股總覽看詳細資料" }, `${w.name || w.code}`)
+                  : el("span", { class: "name" }, `${w.name || w.code}`);
+  top.append(name, el("span", { class: "meta" }, w.name ? w.code : ""));
   c.append(top);
   if (w.error) { c.append(el("div", { class: "meta" }, "⚠ " + w.error)); return c; }
   const star = w.tw && !w.live ? " *" : "";
