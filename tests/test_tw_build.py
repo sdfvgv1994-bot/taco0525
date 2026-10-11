@@ -529,8 +529,15 @@ def test_demo_build(tmp_path):
     tw_build.main(["--out", str(out), "--demo"])
     summary = json.loads((out / "data" / "summary.json").read_text(encoding="utf-8"))
     assert summary["demo"] is True and contract.check_summary(summary) == []
-    assert contract.check_stocks(json.loads((out / "data" / "stocks.json").read_text(encoding="utf-8"))) == []
+    stocks = json.loads((out / "data" / "stocks.json").read_text(encoding="utf-8"))
+    assert contract.check_stocks(stocks) == []
     assert (out / "data" / "hist" / "2330.json").exists() and (out / "index.html").exists()
+    # 示範資料也有幾檔漲停、跌停（網頁上看得到標籤），家數和個股的 limit 欄一致
+    rows = [dict(zip(stocks["fields"], r)) for r in stocks["rows"]]
+    for mk in contract.MARKETS:
+        m = summary["markets"][mk]
+        assert m["limit_up"] == sum(r["market"] == mk and r["limit"] == 1 for r in rows) > 0
+        assert m["limit_down"] == sum(r["market"] == mk and r["limit"] == -1 for r in rows) > 0
 
 
 def test_no_fetch_makes_zero_requests(tmp_path, small, monkeypatch):

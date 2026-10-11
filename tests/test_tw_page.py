@@ -1,4 +1,5 @@
 """台股總覽網頁（tw_market/static/index.html）與其他頁面連過去的連結。"""
+import json
 import re
 import shutil
 import subprocess
@@ -53,6 +54,56 @@ def test_script_syntax_is_valid(tmp_path):
     js.write_text(scripts[0], encoding="utf-8")
     r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def _js(html: str, name: str) -> str:
+    """頁面程式裡某個 const / let 或 function 的原始碼（拿出來給 node 單獨執行）。"""
+    m = re.search(rf"^(?:const|let) {name} = .*?;$|^function {name}\(.*?^}}$", html, re.S | re.M)
+    assert m, f"頁面裡找不到 {name}"
+    return m.group(0)
+
+
+def test_page_reads_every_stock_field():
+    from tw_market.contract import STOCK_FIELDS
+    fields = json.loads(_js(_html(PAGE), "FIELDS").split("=", 1)[1].rstrip(";"))
+    assert fields == STOCK_FIELDS, "網頁的 FIELDS 要和 contract.STOCK_FIELDS 一樣（新增欄位時網頁也要讀）"
+
+
+def test_limit_badges_follow_the_limit_field(tmp_path):
+    """漲停、跌停標籤看 stocks.json 的 limit 欄（和大盤的漲停家數同一個規則）：
+    漲 9.58% 的也可能是漲停、沒有漲跌幅限制的新股漲 12% 不是；舊的 stocks.json 沒有 limit 欄時才用 9.5% 估計。"""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("沒有 node")
+    html = _html(PAGE)
+    code = "\n".join(_js(html, n) for n in ("FIELDS", "TEXT_FIELDS", "isNum", "normQ", "hasLimit", "limitOf", "setStocks"))
+    js = tmp_path / "limit.js"
+    js.write_text("let stocks, byCode, indStats, groupNames;\n" + code + """
+const ROWS = [
+  { code: "1303", type: "stock", change_pct: 9.58, limit: 1 },     // 南亞：漲停價只漲 9.58%
+  { code: "6488", type: "stock", change_pct: 12, limit: 0 },       // 新股沒有漲跌幅限制
+  { code: "2330", type: "stock", change_pct: -9.6, limit: -1 },
+  { code: "2317", type: "stock", change_pct: -9.7, limit: 0 },
+  { code: "00631L", type: "etf", change_pct: 10, limit: null },
+];
+const run = (fields) => {
+  setStocks({ fields, rows: ROWS.map((r) => fields.map((k) => (k in r ? r[k] : k === "name" ? r.code : null))) });
+  return Object.fromEntries(stocks.map((r) => [r.code, limitOf(r)]));
+};
+console.log(JSON.stringify([run(FIELDS), run(FIELDS.filter((k) => k !== "limit"))]));
+""", encoding="utf-8")
+    r = subprocess.run([node, str(js)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    with_field, without = json.loads(r.stdout)
+    assert with_field == {"1303": "up", "6488": None, "2330": "down", "2317": None, "00631L": None}
+    assert without == {"1303": "up", "6488": "up", "2330": "down", "2317": "down", "00631L": None}
+
+
+def test_page_warns_when_cloud_updates_stop():
+    html = _html(PAGE)
+    # updated_utc 是最後一次確認資料是最新的時間（雲端每 15 分鐘確認一次），太久沒動就提醒（和全球看板一樣）
+    assert "const STALE_MS = 90 * 60 * 1000;" in html
+    assert "雲端更新可能暫停了" in html and "雲端更新可能暫停了" in _html(WORLD)
 
 
 def test_world_board_links_to_tw_only_in_static_version():

@@ -63,7 +63,9 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; mar
 .title-row { display: flex; align-items: center; gap: 8px; }
 h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: .02em; }
 .updated { color: var(--muted); font-size: 12px; }
-.updated span + span::before { content: "·"; margin: 0 6px; }
+/* 每段不拆開（「雲端更新可能暫停了」不會斷成兩行），放不下時整段換到下一行，「·」留在上一行的行尾 */
+.updated span { display: inline-block; }
+.updated span:not(:last-child)::after { content: "·"; margin: 0 6px; }
 .updated .warn { color: var(--warn-ink); }
 .spacer { flex: 1; }
 .links { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -429,12 +431,14 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 const $ = (id) => document.getElementById(id);
 const NS = "http://www.w3.org/2000/svg";
 const REFRESH_MS = 10 * 60 * 1000;   // 每 10 分鐘重新讀一次資料
+// 雲端每 15 分鐘確認一次資料（假日也會），超過這麼久沒確認就提醒（和全球看板一樣 90 分鐘）
+const STALE_MS = 90 * 60 * 1000;
 const PAGE_SIZE = 50;
 const WD = "日一二三四五六";
 const MKT = { tse: "上市", otc: "上櫃" };
 const FIELDS = ["code", "name", "market", "type", "industry", "close", "change", "change_pct", "open", "high", "low",
   "volume", "value", "pe", "dividend_yield", "pb", "foreign", "trust", "dealer", "inst_total",
-  "margin_balance", "margin_change", "short_balance", "short_change"];
+  "margin_balance", "margin_change", "short_balance", "short_change", "limit"];
 const TEXT_FIELDS = new Set(["code", "name", "market", "type", "industry"]);
 // 證交所的產業順序（下拉選單照這個順序排）
 const IND_ORDER = ["水泥工業", "食品工業", "塑膠工業", "紡織纖維", "電機機械", "電器電纜", "玻璃陶瓷", "造紙工業",
@@ -580,7 +584,13 @@ const sMoney = (v) => (isNum(v) ? sgn(v) + money(v) : "—");
 const unit = (s, u) => (s === "—" ? s : s + u);
 const dir = (v) => (!isNum(v) ? "" : v > 0 ? "rise" : v < 0 ? "fall" : "flat");
 const arrow = (v) => (!isNum(v) ? "" : v > 0 ? "▲ " : v < 0 ? "▼ " : "");
-const limitOf = (r) => (isNum(r.change_pct) && Math.abs(r.change_pct) >= 9.5 ? (r.change_pct > 0 ? "up" : "down") : null);
+// 漲停、跌停：看資料的 limit 欄（收盤價剛好是漲停 / 跌停價，和大盤的漲停、跌停家數同一個規則；
+// 存託憑證也會標，只是不算進家數）。舊的 stocks.json 沒有這一欄時，才用漲跌幅 9.5% 估計
+let hasLimit = false;
+function limitOf(r) {
+  if (hasLimit) return r.limit === 1 ? "up" : r.limit === -1 ? "down" : null;
+  return r.type === "stock" && isNum(r.change_pct) && Math.abs(r.change_pct) >= 9.5 ? (r.change_pct > 0 ? "up" : "down") : null;
+}
 const LIM_TEXT = { up: "漲停", down: "跌停" };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -631,6 +641,7 @@ async function getJSON(url) {
 
 function setStocks(js) {
   const fields = Array.isArray(js && js.fields) ? js.fields : [];
+  hasLimit = fields.includes("limit");
   const ix = {};
   fields.forEach((k, i) => { ix[k] = i; });
   const out = [], seen = new Set();
@@ -734,6 +745,7 @@ function showUpdated() {
   const t = Date.parse(summary.updated_utc || "");
   if (isFinite(t)) box.append(el("span", { title: new Date(t).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }) }, agoText(t)));
   if (lastError) box.append(el("span", { class: "warn" }, `⚠ 這次更新失敗（${errText(lastError)}），畫面是上一次的資料`));
+  else if (isFinite(t) && !summary.demo && Date.now() - t > STALE_MS) box.append(el("span", { class: "warn" }, "⚠ 雲端更新可能暫停了"));
 }
 
 // ---------- 大盤 ----------
@@ -771,7 +783,7 @@ function renderMarket() {
   const sum = (k) => inc.reduce((a, [m]) => addUp(a, m[k]), null);
   const up = sum("up"), down = sum("down"), flat = sum("flat"), lu = sum("limit_up"), ld = sum("limit_down");
   const b = $("breadth");
-  b.replaceChildren(el("h3", {}, `漲跌家數（${inc.length === 1 ? inc[0][1] : "上市＋上櫃"}，不含 ETF）`));
+  b.replaceChildren(el("h3", {}, `漲跌家數（${inc.length === 1 ? inc[0][1] : "上市＋上櫃"}，不含 ETF、存託憑證）`));
   const total = (up || 0) + (down || 0) + (flat || 0);
   if (!inc.length || !total) {
     b.append(el("div", { class: "pending" }, "—"));
