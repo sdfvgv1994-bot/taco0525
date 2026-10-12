@@ -1,4 +1,13 @@
 {
-  "fired": [],
-  "history": []
+  "fired": [
+    "NVDA|sell|macd|2026-10-12"
+  ],
+  "history": [
+    {
+      "time": "2026-10-12 21:33:30",
+      "code": "NVDA",
+      "kind": "sell",
+      "message": "NVDA 賣出訊號【MACD】MACD 死亡交叉，現價 228.60"
+    }
+  ]
 }
