@@ -1,6 +1,8 @@
 {
   "fired": [
-    "NVDA|sell|macd|2026-10-12"
+    "NVDA|sell|macd|2026-10-12",
+    "0050|sell|macd|2026-10-13",
+    "2454|sell|ma|2026-10-13"
   ],
   "history": [
     {
@@ -8,6 +10,18 @@
       "code": "NVDA",
       "kind": "sell",
       "message": "NVDA 賣出訊號【MACD】MACD 死亡交叉，現價 228.60"
+    },
+    {
+      "time": "2026-10-13 09:00:06",
+      "code": "0050",
+      "kind": "sell",
+      "message": "0050 賣出訊號【MACD】MACD 死亡交叉，現價 112.50"
+    },
+    {
+      "time": "2026-10-13 09:00:06",
+      "code": "2454",
+      "kind": "sell",
+      "message": "2454 賣出訊號【均線交叉】死亡交叉，現價 4485.00"
     }
   ]
 }
