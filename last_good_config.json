@@ -22,6 +22,7 @@
     "auto_trade": true,
     "auto_buy_amount": 100000.0,
     "stop_loss_pct": 8.0,
+    "trail_stop_pct": 0.0,
     "short_ma": 5,
     "long_ma": 20
   },
