@@ -5,6 +5,15 @@
 GitHub 的雲端機器每 15 分鐘幫你跑一次看盤：抓自選股報價、判斷策略訊號、照設定自動模擬交易，
 再把結果做成網頁。和電腦上的看盤系統是**各自獨立**的兩份資料（雲端有自己的 100 萬模擬帳戶）。
 
+## 在網頁上加減自選股（最方便）
+網頁上「✏️ 新增 / 刪除自選股、設定上下限與支撐線」：輸入代號按「加入」、按 ✕ 刪除、填上下限和支撐線，按「💾 儲存」，
+大約 2～3 分鐘後雲端重新計算、網頁自動更新。
+- 第一次儲存要在手機貼一組 GitHub 權杖（網頁上有步驟）：
+  [建立權杖](https://github.com/settings/personal-access-tokens/new) → Repository access 只選 taco0525 →
+  Contents 選「Read and write」→ Generate token
+- 權杖只存在那支手機的瀏覽器裡，不會出現在網頁或倉庫上；手機遺失時到同一頁把權杖刪掉
+- 儲存時其實就是幫你改 `config.toml`（保留檔案裡的說明文字），所以和下面的方法改的是同一個檔案
+
 ## 修改設定（手機也可以）
 1. 打開 [cloud_monitor/config.toml](https://github.com/sdfvgv1994-bot/taco0525/edit/main/cloud_monitor/config.toml)
    （網頁上的「⚙️ 修改設定」按鈕也會帶你過去）

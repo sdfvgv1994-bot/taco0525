@@ -108,6 +108,33 @@ dl.settings { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; mar
 dl.settings dt { color: var(--muted); }
 dl.settings dd { margin: 0; }
 .foot { color: var(--muted); font-size: 12px; }
+/* 編輯自選股 */
+details.editor > summary { cursor: pointer; font-weight: 650; list-style: none; }
+details.editor > summary::-webkit-details-marker { display: none; }
+details.editor > summary::before { content: "▸ "; color: var(--muted); }
+details.editor[open] > summary::before { content: "▾ "; }
+.ed-rows { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.ed-row { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; display: grid;
+  grid-template-columns: minmax(90px, 1.2fr) repeat(3, minmax(70px, 1fr)) auto; gap: 6px; align-items: end; }
+.ed-row .code { font-weight: 650; align-self: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-row .code small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+.ed-row label, .ed-add label, .ed-token label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 2px; }
+.ed input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 8px; min-width: 0; width: 100%; }
+.ed .del { border: none; background: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px 6px; align-self: center; }
+.ed-add, .ed-actions { display: flex; gap: 6px; align-items: end; flex-wrap: wrap; }
+.ed-add input { width: 160px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:disabled { opacity: .5; cursor: default; }
+.ed-msg { margin: 8px 0 0; font-size: 13px; }
+.ed-msg.ok { color: var(--open); } .ed-msg.err { color: var(--rise); }
+.ed-token { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+.ed-token ol { margin: 6px 0; padding-left: 20px; }
+.ed-token a { color: inherit; }
+@media (max-width: 560px) {
+  .ed-row { grid-template-columns: 1fr 1fr 1fr auto; }
+  .ed-row .code { grid-column: 1 / -1; }
+}
 @media (max-width: 560px) {
   .tile .v { font-size: 18px; }
   /* 手機：按鈕自己一行、靠左排，字小一點，四個按鈕排得下一行 */
@@ -151,6 +178,13 @@ dl.settings dd { margin: 0; }
   <section class="panel">
     <h2>自選股</h2>
     <div class="cards" id="watch"></div>
+  </section>
+
+  <section class="panel ed">
+    <details class="editor" id="editor">
+      <summary>✏️ 新增 / 刪除自選股、設定上下限與支撐線</summary>
+      <div id="edBody"><p class="empty">載入中…</p></div>
+    </details>
   </section>
 
   <section class="panel">
@@ -289,8 +323,9 @@ function render() {
   }
 
   // 自選股
-  if (!data.watch.length) $("watch").replaceChildren(el("div", { class: "empty" }, "自選股是空的，按「⚙️ 修改設定」加入"));
+  if (!data.watch.length) $("watch").replaceChildren(el("div", { class: "empty" }, "自選股是空的，在下面「✏️ 新增 / 刪除自選股」加入"));
   else $("watch").replaceChildren(...data.watch.map(watchCard));
+  if ($("editor").open && ED.text == null && !ED.busy) edLoad();
 
   // 提醒
   const al = $("alerts"); al.replaceChildren();
@@ -422,6 +457,270 @@ async function load() {
   }
   showUpdated();
 }
+// ---------- 在網頁上編輯自選股：直接改 GitHub 上的 cloud_monitor/config.toml ----------
+// 存檔 = 在 GitHub 上提交一次修改，會自動觸發雲端重新計算（約 2 分鐘）。
+// 需要一組只能改這個倉庫的 GitHub 權杖，只存在這個瀏覽器（localStorage），不會放進網頁或倉庫。
+const ED = { text: null, sha: null, rows: [], busy: false, msg: "", msgKind: "", needToken: false };
+const TOKEN_KEY = "monitorGhToken";
+function token(v) {
+  try {
+    if (v === undefined) return localStorage.getItem(TOKEN_KEY) || "";
+    if (v) localStorage.setItem(TOKEN_KEY, v); else localStorage.removeItem(TOKEN_KEY);
+  } catch (e) { return ""; }
+  return v;
+}
+function repoInfo() {
+  const m = data && /github\.com\/([^/]+)\/([^/]+)\/edit\/([^/]+)\/(.+)$/.exec(data.edit_url || "");
+  return m && { owner: m[1], repo: m[2], branch: m[3], path: m[4] };
+}
+const b64dec = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
+function b64enc(s) {
+  let bin = "";
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+async function gh(method, body) {
+  const r = repoInfo();
+  if (!r) throw new Error("找不到 GitHub 倉庫的位置");
+  const url = `https://api.github.com/repos/${r.owner}/${r.repo}/contents/${r.path}` +
+    (method === "GET" ? `?ref=${r.branch}&t=${Date.now()}` : "");
+  const headers = { Accept: "application/vnd.github+json" };
+  if (token()) headers.Authorization = `Bearer ${token()}`;
+  const res = await fetch(url, { method, headers, cache: "no-store", body: body ? JSON.stringify({ ...body, branch: r.branch }) : undefined });
+  const j = await res.json().catch(() => ({}));
+  if (res.ok) return j;
+  if (res.status === 401) { ED.needToken = true; throw new Error("權杖錯誤或已過期，請重新貼上一組"); }
+  if (res.status === 403 || res.status === 404) { ED.needToken = true; throw new Error("這組權杖不能修改 taco0525（建立時 Contents 要選「Read and write」，倉庫要選 taco0525）"); }
+  if (res.status === 409) throw new Error("設定剛剛在別的地方被改過了，請按「重新載入」再改一次");
+  throw new Error(`GitHub 回應 ${res.status}：${j.message || ""}`);
+}
+// 手機輸入法的全形符號當半形看（一個字換一個字，位置不變，才能拿來切原本的文字）
+const norm = (t) => t.replace(/[“”„＂]/g, '"').replace(/[‘’＇]/g, "'").replace(/，/g, ",").replace(/＝/g, "=")
+  .replace(/［/g, "[").replace(/］/g, "]").replace(/｛/g, "{").replace(/｝/g, "}").replace(/．/g, ".")
+  .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 48));
+function limitsRange(t) {   // [limits] 段落內容的位置（標題那行之後到下一個 [段落] 之前）
+  const h = /^[ \t]*\[limits\][^\n]*$/m.exec(t);
+  if (!h) return null;
+  const start = h.index + h[0].length;
+  const next = /^[ \t]*\[/m.exec(t.slice(start));
+  return { start, end: next ? start + next.index : t.length };
+}
+function watchRange(t) {
+  const m = /^[ \t]*watchlist[ \t]*=[ \t]*\[[\s\S]*?\]/m.exec(t);
+  return m && { start: m.index, end: m.index + m[0].length, body: m[0] };
+}
+function parseConfig(text) {
+  const t = norm(text);
+  const w = watchRange(t);
+  const codes = [];
+  if (w) {
+    const inner = w.body.slice(w.body.indexOf("[") + 1, -1).replace(/#[^\n]*/g, "");
+    for (const m of inner.matchAll(/"([^"]*)"|'([^']*)'|([^\s,"']+)/g)) {
+      const c = (m[1] ?? m[2] ?? m[3]).trim().toUpperCase();
+      if (c && !codes.includes(c)) codes.push(c);
+    }
+  }
+  const lim = {};
+  const r = limitsRange(t);
+  if (r) {
+    for (const line of t.slice(r.start, r.end).split("\n")) {
+      const m = /^\s*["']?([^"'=\s#]+)["']?\s*=\s*\{(.*)\}/.exec(line);
+      if (!m) continue;
+      const o = {};
+      for (const k of ["lower", "upper"]) {
+        const x = new RegExp(`${k}\\s*=\\s*(-?[\\d.]+)`).exec(m[2]);
+        if (x) o[k] = Number(x[1]);
+      }
+      const s = /support\s*=\s*\[([^\]]*)\]/.exec(m[2]) || /support\s*=\s*(-?[\d.]+)/.exec(m[2]);
+      if (s) o.support = s[1].split(",").map((x) => Number(x.trim())).filter((x) => x > 0);
+      lim[m[1].toUpperCase()] = o;
+    }
+  }
+  return codes.map((code) => ({ code, lower: lim[code]?.lower ?? "", upper: lim[code]?.upper ?? "",
+                                support: (lim[code]?.support || []).join(", ") }));
+}
+function buildConfig(orig, rows) {
+  const num = (v) => String(Number(v));
+  const entries = rows.filter((r) => r.lower !== "" || r.upper !== "" || r.support.length).map((r) => {
+    const parts = [];
+    if (r.lower !== "") parts.push(`lower = ${num(r.lower)}`);
+    if (r.upper !== "") parts.push(`upper = ${num(r.upper)}`);
+    if (r.support.length) parts.push(`support = [${r.support.map(num).join(", ")}]`);
+    return `${JSON.stringify(r.code)} = { ${parts.join(", ")} }`;
+  });
+  let text = orig;
+  // 1. [limits] 段落：保留說明（# 開頭）和空行，換掉原本每一檔的設定
+  const lr = limitsRange(norm(text));
+  if (lr) {
+    const lines = text.slice(lr.start, lr.end).split("\n");
+    const kept = lines.slice(1).filter((l) => !l.trim() || l.trim().startsWith("#"));
+    text = text.slice(0, lr.start) + "\n" + [...entries, ...kept].join("\n") + text.slice(lr.end);
+  } else if (entries.length) {
+    const block = "[limits]\n" + entries.join("\n") + "\n\n";
+    const at = /^[ \t]*\[strategy_params\]/m.exec(norm(text));
+    text = at ? text.slice(0, at.index) + block + text.slice(at.index) : text.replace(/\n*$/, "\n\n") + block;
+  }
+  // 2. 自選股那一行（在所有 [段落] 前面）
+  const line = `watchlist = [${rows.map((r) => JSON.stringify(r.code)).join(", ")}]`;
+  const wr = watchRange(norm(text));
+  if (wr) text = text.slice(0, wr.start) + line + text.slice(wr.end);
+  else {
+    const first = /^[ \t]*\[/m.exec(norm(text));
+    text = first ? text.slice(0, first.index) + line + "\n\n" + text.slice(first.index) : line + "\n" + text;
+  }
+  return text;
+}
+function edSay(msg, kind = "") { ED.msg = msg; ED.msgKind = kind; drawEditor(); }
+async function edLoad() {
+  ED.busy = true; edSay("讀取目前的設定…");
+  try {
+    const j = await gh("GET");
+    ED.text = b64dec(j.content); ED.sha = j.sha;
+    ED.rows = parseConfig(ED.text);
+    ED.busy = false; edSay("");
+  } catch (e) { ED.busy = false; edSay(e.message, "err"); }
+}
+function readRows() {   // 從畫面上的輸入框讀回來（輸入中的值）
+  document.querySelectorAll(".ed-row").forEach((row, i) => {
+    for (const k of ["lower", "upper", "support"]) ED.rows[i][k] = row.querySelector(`[data-k="${k}"]`).value.trim();
+  });
+}
+function checkRows() {
+  const out = [];
+  for (const r of ED.rows) {
+    const lower = r.lower === "" ? "" : Number(norm(String(r.lower)));
+    const upper = r.upper === "" ? "" : Number(norm(String(r.upper)));
+    const support = norm(String(r.support)).split(/[,\s]+/).filter(Boolean).map(Number);
+    if ((lower !== "" && !(lower > 0)) || (upper !== "" && !(upper > 0)) || support.some((x) => !(x > 0)))
+      throw new Error(`${r.code} 的價格要填大於 0 的數字`);
+    if (lower !== "" && upper !== "" && lower >= upper) throw new Error(`${r.code} 的下限要小於上限`);
+    out.push({ code: r.code, lower, upper, support: [...new Set(support)].sort((a, b) => b - a) });
+  }
+  return out;
+}
+async function edSave() {
+  readRows();
+  let rows;
+  try { rows = checkRows(); } catch (e) { return edSay(e.message, "err"); }
+  if (!rows.length) return edSay("自選股至少要留一檔", "err");
+  if (!token()) { ED.needToken = true; return edSay("第一次存檔要先設定 GitHub 權杖（看下面的步驟）", "err"); }
+  const text = buildConfig(ED.text, rows);
+  if (text === ED.text) return edSay("沒有變更");
+  ED.busy = true; edSay("存檔中…");
+  try {
+    const j = await gh("PUT", { message: `手機修改自選股：${rows.map((r) => r.code).join("、")}`,
+                                content: b64enc(text), sha: ED.sha });
+    ED.text = text; ED.sha = j.content.sha; ED.rows = parseConfig(text); ED.needToken = false;
+    ED.busy = false;
+    edSay("✅ 已存到 GitHub！雲端正在重新計算，大約 2～3 分鐘後這一頁會自動更新。", "ok");
+  } catch (e) { ED.busy = false; edSay(e.message, "err"); }
+}
+function edAdd() {
+  readRows();
+  const box = $("edAddCode");
+  for (const raw of norm(box.value).split(/[,\s]+/).filter(Boolean)) {
+    const code = raw.replace(/["']/g, "").toUpperCase();
+    if (ED.rows.some((r) => r.code === code)) { edSay(`${code} 已經在自選股裡`, "err"); continue; }
+    ED.rows.push({ code, lower: "", upper: "", support: "" });
+    ED.msg = `已加入 ${code}，記得按「儲存」`; ED.msgKind = "";
+  }
+  box.value = "";
+  drawEditor();
+}
+function drawEditor() {
+  const body = $("edBody");
+  if (!body) return;
+  if (ED.text == null) {
+    body.replaceChildren(el("p", { class: "ed-msg " + ED.msgKind }, ED.msg || "載入中…"));
+    if (!ED.busy) {
+      const again = el("button", { class: "btn" }, "重新載入"); again.onclick = edLoad; body.append(again);
+    }
+    if (ED.needToken) body.append(tokenBox());
+    return;
+  }
+  const names = Object.fromEntries((data?.watch || []).map((w) => [w.code, w.name]));
+  const held = new Set((data?.positions || []).map((p) => p.code));
+  const rows = el("div", { class: "ed-rows" });
+  ED.rows.forEach((r, i) => {
+    const row = el("div", { class: "ed-row" });
+    const code = el("div", { class: "code" }, r.code);
+    code.append(el("small", {}, (names[r.code] || "") + (held.has(r.code) ? "・有持股" : "")));
+    row.append(code);
+    for (const [k, label, ph] of [["lower", "下限", "不設"], ["upper", "上限", "不設"], ["support", "支撐線", "例 900, 850"]]) {
+      const lab = el("label", {}, label);
+      const inp = el("input", { "data-k": k, inputmode: "decimal", placeholder: ph, value: r[k] });
+      lab.append(inp); row.append(lab);
+    }
+    const del = el("button", { class: "del", title: `刪除 ${r.code}`, "aria-label": `刪除 ${r.code}` }, "✕");
+    del.onclick = () => {
+      readRows();
+      if (held.has(r.code) && !confirm(`${r.code} 還有模擬持股，刪掉後雲端會繼續追蹤到賣出為止。確定刪除？`)) return;
+      ED.rows.splice(i, 1); ED.msg = `已刪除 ${r.code}，記得按「儲存」`; ED.msgKind = ""; drawEditor();
+    };
+    row.append(del);
+    rows.append(row);
+  });
+  const add = el("div", { class: "ed-add" });
+  const lab = el("label", {}, "新增代號（台股打數字、美股英文、加權、BTC）");
+  const inp = el("input", { id: "edAddCode", placeholder: "例 2603 或 TSLA", autocomplete: "off", enterkeyhint: "done" });
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); edAdd(); } });
+  lab.append(inp);
+  const addBtn = el("button", { class: "btn" }, "＋ 加入"); addBtn.onclick = edAdd;
+  add.append(lab, addBtn);
+  const actions = el("div", { class: "ed-actions" });
+  const save = el("button", { class: "btn primary" }, ED.busy ? "處理中…" : "💾 儲存");
+  save.disabled = ED.busy; save.onclick = edSave;
+  const reload = el("button", { class: "btn" }, "重新載入"); reload.disabled = ED.busy;
+  reload.onclick = edLoad;
+  actions.append(save, reload);
+  if (token()) {
+    const forget = el("button", { class: "btn" }, "這支手機登出");
+    forget.onclick = () => { if (confirm("刪掉這個瀏覽器記住的 GitHub 權杖？")) { token(""); edSay("已刪除權杖"); } };
+    actions.append(forget);
+  }
+  const msg = el("p", { class: "ed-msg " + ED.msgKind }, ED.msg);
+  const foot = el("p", { class: "foot" }, "下限 / 上限：突破或跌破就提醒；支撐線：昨天收盤還在線上、今天跌破就提醒，可以填好幾條（用逗號分開）。" +
+    "策略、停損、自動交易等其他設定請按上面的「⚙️ 修改設定」。");
+  body.replaceChildren(rows, add, el("div", { style: "height:10px" }), actions, msg);
+  if (ED.needToken || !token()) body.append(tokenBox());
+  body.append(foot);
+}
+function tokenBox() {
+  const box = el("div", { class: "ed-token" });
+  box.append(el("b", {}, "第一次使用：設定 GitHub 權杖（只要做一次）"));
+  const ol = el("ol");
+  const steps = [
+    ["在這支手機的瀏覽器登入 GitHub，打開 ", ["建立權杖頁面", "https://github.com/settings/personal-access-tokens/new"]],
+    ["Token name 隨便取（例如「看盤手機」），Expiration 選 1 年（或 No expiration）"],
+    ["Repository access 選「Only select repositories」，選 taco0525"],
+    ["Permissions → Repository permissions → Contents 選「Read and write」"],
+    ["按最下面的 Generate token，複製 github_pat_ 開頭那一串，貼到下面"],
+  ];
+  for (const [text, link] of steps) {
+    const li = el("li", {}, text);
+    if (link) li.append(el("a", { href: link[1], target: "_blank", rel: "noopener" }, link[0]));
+    ol.append(li);
+  }
+  box.append(ol);
+  const row = el("div", { class: "ed-add" });
+  const lab = el("label", {}, "GitHub 權杖");
+  const inp = el("input", { type: "password", placeholder: "github_pat_…", autocomplete: "off" });
+  lab.append(inp);
+  const ok = el("button", { class: "btn primary" }, "記住這組權杖");
+  ok.onclick = async () => {
+    const v = inp.value.trim();
+    if (!/^(github_pat_|ghp_)\w{20,}$/.test(v)) return edSay("看起來不是 GitHub 權杖（應該是 github_pat_ 開頭的一長串）", "err");
+    token(v); ED.needToken = false;
+    if (ED.text == null) await edLoad();
+    else edSay("已記住權杖，可以按「儲存」了", "ok");
+  };
+  row.append(lab, ok);
+  box.append(row, el("p", { class: "foot", style: "margin:6px 0 0" },
+    "權杖只存在這個瀏覽器裡，不會出現在網頁或 GitHub 上；這組權杖只能改 taco0525 的檔案。手機遺失時到 GitHub 的同一頁把它刪掉就好。"));
+  return box;
+}
+$("editor").addEventListener("toggle", () => { if ($("editor").open && ED.text == null && !ED.busy && data) edLoad(); });
+
 applyPrefs();
 load();
 setInterval(load, 60000);
