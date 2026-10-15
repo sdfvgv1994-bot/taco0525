@@ -1,4 +1,9 @@
-"""看盤核心：更新報價 → 判斷訊號 → 去重提醒 → 自動模擬交易 → 存檔。"""
+"""看盤核心：更新報價 → 判斷訊號 → 去重提醒 → 自動模擬交易 → 存檔。
+
+refresh() 分成兩段，畫面版（stock_monitor/live.py）才能在抓資料時不卡住畫面：
+    fetch_all()  連網：即時報價、日 K、股名（不改任何狀態）
+    apply()      不連網：判斷訊號、提醒、自動交易、存檔
+"""
 from __future__ import annotations
 
 import hashlib
@@ -12,7 +17,7 @@ from common import strategies as strat
 from common.market import fetch_history, parse_symbol, uses_twse
 
 from .account import Account, TradeError
-from .signals import Alert, Snapshot, evaluate, snapshot
+from .signals import Alert, Snapshot, evaluate, snapshot, update_peak
 
 ALERT_HISTORY_MAX = 1000
 FIRED_KEEP_DAYS = 14   # 已響過的提醒記錄保留幾天（以 K 棒日期計）
@@ -157,15 +162,16 @@ class Monitor:
         return True
 
     # ---- 更新 ----
-    def realtime_quotes(self) -> dict:
+    def realtime_quotes(self, names=None, settings=None) -> dict:
         """台股自選股一次向證交所查即時報價；示範模式或指定 Yahoo 時不查。"""
-        s = self.settings
+        s = self.settings if settings is None else settings
+        names = list(self.watchlist if names is None else names)
         self.realtime_error = None
         self.realtime_tried = False
         # realtime 沒設定時：資料來源是 yahoo 就不查；雲端版會設 realtime=True（歷史用 Yahoo、即時試證交所）
         if s.get("demo") or not s.get("realtime", s.get("source", "auto") != "yahoo"):
             return {}
-        tw = [n for n in self.watchlist if uses_twse(parse_symbol(n))]
+        tw = [n for n in names if uses_twse(parse_symbol(n))]
         if not tw:
             return {}
         items = ["^TWII" if parse_symbol(n).candidates[0] == "^TWII" else n.split(".")[0]
@@ -194,19 +200,52 @@ class Monitor:
         return self._name_lookup(sym.candidates[0].split(".")[0])
 
     def refresh(self, now: datetime | None = None) -> RefreshResult:
+        return self.apply(self.fetch_all(now))
+
+    def fetch_all(self, now: datetime | None = None, names=None, settings=None) -> dict:
+        """連網抓這次需要的資料，不改動自選股、帳戶等狀態。names / settings 不給就用目前的。"""
         now = now or datetime.now()
+        s = dict(self.settings if settings is None else settings)
+        names = list(self.watchlist if names is None else names)
+        quotes = self.realtime_quotes(names, s)
+        out = {"now": now, "quotes": quotes, "data": {}, "names": {},
+               "realtime_error": self.realtime_error, "realtime_tried": self.realtime_tried}
+        for name, q in quotes.items():
+            if q.name and q.name != name:
+                out["names"][name] = q.name
+        for name in names:
+            try:
+                out["data"][name] = self.fetcher(name, s, now, quotes)
+            except Exception as e:  # noqa: BLE001 - 一檔失敗不影響其他檔
+                out["data"][name] = e
+                continue
+            if name not in self.names and name not in out["names"]:
+                try:
+                    found = self.lookup_name(name)
+                except Exception:  # noqa: BLE001 - 查不到股名不影響報價
+                    found = None
+                if found:
+                    out["names"][name] = found
+        return out
+
+    def apply(self, fetched: dict) -> RefreshResult:
+        """用 fetch_all() 抓到的資料判斷訊號、提醒、自動交易，最後存檔。不連網。"""
+        now = fetched["now"]
         s = self.settings
         res = RefreshResult()
         skipped: dict = {}   # 策略 → [(代號, 原因)]：這次無法判斷的
-        quotes = self.realtime_quotes()
-        res.realtime_error = self.realtime_error
-        res.realtime_tried = self.realtime_tried
-        for name, q in quotes.items():
-            if q.name and q.name != name:
-                self.names[name] = q.name
+        quotes = fetched["quotes"]
+        res.realtime_error = fetched["realtime_error"]
+        res.realtime_tried = fetched["realtime_tried"]
+        self.names.update(fetched["names"])
         for name, limits in list(self.watchlist.items()):
+            if name not in fetched["data"]:   # 抓資料之後才加入的，下次再更新
+                continue
             try:
-                _, df, price = self.fetcher(name, s, now, quotes)
+                got = fetched["data"][name]
+                if isinstance(got, Exception):
+                    raise got
+                _, df, price = got
                 snap = snapshot(name, df, price, s)
             except Exception as e:  # noqa: BLE001 - 一檔失敗不影響其他檔
                 res.errors[name] = str(e)
@@ -215,15 +254,10 @@ class Monitor:
             self.last_prices[name] = snap.price
             if name in quotes and quotes[name].price is not None:
                 res.live.add(name)
-            if name not in self.names:
-                try:
-                    found = self.lookup_name(name)
-                except Exception:  # noqa: BLE001 - 查不到股名不影響報價
-                    found = None
-                if found:
-                    self.names[name] = found
             for key, why in snap.skipped.items():
                 skipped.setdefault(key, []).append((name, why))
+            pos = self.account.positions.get(name)
+            update_peak(limits, pos, snap.price)
             if self._is_active is not None and not self._is_active(name, now):
                 res.inactive.add(name)
                 continue
@@ -233,8 +267,7 @@ class Monitor:
                     res.inactive.add(name)
                     res.stale[name] = snap.date
                     continue
-            pos = self.account.positions.get(name)
-            for alert in evaluate(snap, limits, pos, s["stop_loss_pct"]):
+            for alert in evaluate(snap, limits, pos, s["stop_loss_pct"], s.get("trail_stop_pct", 0)):
                 if not self._fresh(alert, now, snap.date):
                     continue
                 res.alerts.append(alert)
@@ -255,8 +288,8 @@ class Monitor:
                        if uses_twse(parse_symbol(n)) and n not in res.live and n not in res.stale]
             fallback = ("來自 Yahoo（約延遲 15 分鐘）" if s.get("source") == "yahoo"
                         else "是最近一天的收盤價")
-            if self.realtime_error:
-                res.notes.append(f"證交所即時報價暫時抓不到（{self.realtime_error}）"
+            if res.realtime_error:
+                res.notes.append(f"證交所即時報價暫時抓不到（{res.realtime_error}）"
                                  + (f"，標 * 的台股價格{fallback}" if missing else ""))
             elif missing:
                 res.notes.append(f"證交所即時報價沒有回傳 {'、'.join(missing)}，"
@@ -282,8 +315,9 @@ class Monitor:
                 tw = parse_symbol(name).is_tw_stock
                 rec = self.account.buy(name, price, shares, tw, f"自動：{why_name}買進", now)
                 self._reset_stop(name)
-            elif alert.kind in ("sell", "stop") and self.account.holds(name):
-                why = f"自動：{why_name}賣出" if alert.kind == "sell" else "自動：停損"
+            elif alert.kind in ("sell", "stop", "trail") and self.account.holds(name):
+                why = {"sell": f"自動：{why_name}賣出", "stop": "自動：停損",
+                       "trail": "自動：移動停損"}[alert.kind]
                 rec = self.account.sell(name, price, None, why, now)
             else:
                 return
@@ -296,31 +330,32 @@ class Monitor:
                        f"（{rec['reason']}）", now)
 
     def _reset_stop(self, name: str) -> None:
-        """新買進後，這檔的停損要能再觸發（停損提醒是跟著持股，不是跟著日期）。"""
+        """新買進後，這檔的停損、移動停損要能再觸發（停損提醒是跟著持股，不是跟著日期）。"""
         self.alert_state["fired"] = [k for k in self.alert_state.get("fired", [])
-                                     if not k.startswith(f"{name}|stop|")]
+                                     if not k.startswith((f"{name}|stop|", f"{name}|trail|"))]
 
     # ---- 手動交易 ----
-    def manual_buy(self, name: str, shares: int, price: float | None = None) -> dict:
+    def manual_buy(self, name: str, shares: int, price: float | None = None,
+                   reason: str = "手動") -> dict:
         key = self.normalize(name)
         if key not in self.watchlist:
             self.add(key)
         price = price or self.last_prices.get(key)
         if not price:
             raise TradeError("還沒有這檔的報價，請先更新一次或指定價格")
-        rec = self.account.buy(key, price, shares, parse_symbol(key).is_tw_stock)
+        rec = self.account.buy(key, price, shares, parse_symbol(key).is_tw_stock, reason)
         self._reset_stop(key)
-        self.store.log(f"模擬成交 買進 {key} {shares} 股 @ {price}（手動）")
+        self.store.log(f"模擬成交 買進 {key} {shares} 股 @ {price}（{reason}）")
         self.save()
         return rec
 
     def manual_sell(self, name: str, shares: int | None = None,
-                    price: float | None = None) -> dict:
+                    price: float | None = None, reason: str = "手動") -> dict:
         key = self.normalize(name)
         price = price or self.last_prices.get(key)
         if not price:
             raise TradeError("還沒有這檔的報價，請先更新一次或指定價格")
-        rec = self.account.sell(key, price, shares)
-        self.store.log(f"模擬成交 賣出 {key} {rec['shares']} 股 @ {price}（手動）")
+        rec = self.account.sell(key, price, shares, reason)
+        self.store.log(f"模擬成交 賣出 {key} {rec['shares']} 股 @ {price}（{reason}）")
         self.save()
         return rec

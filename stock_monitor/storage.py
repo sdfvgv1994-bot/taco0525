@@ -13,6 +13,7 @@ DEFAULT_SETTINGS = {
     "long_ma": 20,
     "interval": 60,             # 自動更新間隔（秒）
     "stop_loss_pct": 8.0,       # 持股虧損超過幾 % 觸發停損
+    "trail_stop_pct": 0.0,      # 移動停損：從持有後的最高價回落幾 % 觸發（0 = 不用）
     "auto_trade": False,        # 是否自動模擬交易
     "auto_buy_amount": 100000,  # 主策略出現買進訊號時，每次買進的金額
     "source": "auto",           # 資料來源：auto（台股用證交所）/ twse / yahoo

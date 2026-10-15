@@ -177,7 +177,7 @@ dl.settings dd { margin: 0; }
 const $ = (id) => document.getElementById(id);
 const NS = "http://www.w3.org/2000/svg";
 let data = null, lastError = null;
-const KIND_ICON = { buy: "🟢", sell: "🔴", above: "⬆️", below: "⬇️", stop: "🛑" };
+const KIND_ICON = { buy: "🟢", sell: "🔴", above: "⬆️", below: "⬇️", stop: "🛑", trail: "📉", support: "🔻" };
 
 function pref(key, val) {
   try {
@@ -325,6 +325,7 @@ function render() {
                 ["其他策略", s.strategies.slice(1).map((x) => x.name).join("、") || "—"],
                 ["自動交易", s.auto_trade ? `開（每次買 ${money(s.auto_buy_amount)}）` : "關"],
                 ["停損", s.stop_loss_pct ? `虧損 ${s.stop_loss_pct}% 賣出` : "不停損"],
+                ["移動停損", s.trail_stop_pct ? `從最高價回落 ${s.trail_stop_pct}% 賣出` : "不使用"],
                 ["均線", `MA${s.short_ma} / MA${s.long_ma}`],
                 ["手機推播", s.notify ? s.notify.status + (s.notify.enabled && s.notify.status.startsWith("已開啟")
                   ? `（訊號：${{ primary: "只有主策略", all: "全部策略", none: "不通知" }[s.notify.signals]}）` : "") : "—"]];
@@ -357,6 +358,7 @@ function watchCard(w) {
   if (w.held) chips.append(el("span", { class: "chip" }, w.held_only ? "持股中（已移出自選股）" : "持股中"));
   const lim = w.limits || {};
   if (lim.lower != null || lim.upper != null) chips.append(el("span", { class: "chip" }, `提醒 ${lim.lower ?? "—"}～${lim.upper ?? "—"}`));
+  if (lim.support && lim.support.length) chips.append(el("span", { class: "chip" }, `支撐 ${lim.support.join("、")}`));
   if (chips.childNodes.length) c.append(chips);
   const st = exStatus(w.exchange);
   const p = el("span", { class: "pill" + (st === "open" ? " open" : "") });

@@ -1,9 +1,39 @@
 # 自動看盤系統＋模擬下單
 
-```bash
-python stock_monitor/monitor.py          # 真實資料（Yahoo Finance）
-python stock_monitor/monitor.py --demo   # 示範資料，不連網
+三種畫面，同一個看盤引擎、同一份存檔（`stock_monitor/data/`，一次只開一個）：
+
+| 畫面 | 怎麼開 | 適合 |
+| --- | --- | --- |
+| 桌面視窗 | 雙擊 `啟動桌面版.bat`，或 `python stock_monitor/desktop_app.py` | 在電腦前看盤 |
+| 手機網頁 | 雙擊 `啟動手機版.bat`，或 `python stock_monitor/web_app.py` | 手機看盤、K 線、基本面、籌碼、新聞 |
+| 文字版 | 雙擊 `文字版.bat`，或 `python stock_monitor/monitor.py` | 命令列 |
+
+三種都可以加 `--demo` 用示範資料（不連網）。電腦關機也想看：[雲端看盤](../cloud_monitor/)（另一份帳戶，規則同一套）。
+
+## 積木架構
+
 ```
+ desktop_app.py   web_app.py + web/   monitor.py       ← 畫面：只管按鈕、表格、網頁
+        └──────────┬──────┘               │
+                live.py（背景更新、提醒紀錄、通知、新聞、給畫面的資料）
+                   └──────────┬───────────┘
+                    engine.py（看盤引擎，雲端看盤也用這個）
+     ┌──────────┬────────┼─────────┬──────────┐
+ signals.py  account.py  storage.py  common/（代號、證交所 / Yahoo 資料、策略、指標、成本）
+ 訊號/停損    模擬帳戶     存檔
+ 另外：notify.py（LINE / Telegram / Discord）、news.py（財經新聞）、market_data.py（K 線、基本面、籌碼）
+```
+
+## 從舊版搬過來
+桌面版、手機版第一次啟動時，如果找到旁邊的舊版 `stock_monitor` 資料夾（例如 `py618\stock_monitor`），
+會自動把自選股、上下限、停損、水平線、模擬帳戶、通知設定、手機網址的 key 搬進 `data/`（舊檔不動）。
+也可以手動：`python -m stock_monitor.import_old 舊資料夾路徑`。
+
+## 手機版
+- 在家（同一個 Wi-Fi）用畫面上的「在家」網址；在外面要在電腦和手機都裝 Tailscale
+- 網址裡有一組密碼（key），只給自己的手機用；通知的 Token 只能在電腦本機的瀏覽器設定
+- 個股頁：K 線（MA、布林、KD、MACD、RSI）、趨勢線、水平線（跌破會提醒）、基本面、籌碼、模擬下單
+- 每日財經新聞推播：每天設定的時間把新聞摘要送到 LINE / Telegram / Discord（電腦要開著）
 
 ## 功能
 - **自選股監控**：台股只打數字（自動判斷上市 / 上櫃）、美股、指數（加權、SPX…）、加密貨幣（BTC…）
@@ -17,8 +47,12 @@ python stock_monitor/monitor.py --demo   # 示範資料，不連網
   - 🟢 買進訊號、🔴 賣出訊號（會標出是哪個策略、為什麼）
   - ⬆️ 突破上限、⬇️ 跌破下限（每檔可自訂）
   - 🛑 停損：持股虧損超過設定 %（預設 8%）
+  - 📉 移動停損：從買進後的最高價回落設定 %（預設不用）
+  - 🔻 跌破支撐：昨天收盤還在水平線上、今天跌破（手機版個股頁畫水平線）
+  - 停損、移動停損可以每檔另外設定；沒有模擬持股的真實持股可以填「持有成本」，只提醒不交易
 - **模擬下單**：虛擬帳戶起始 100 萬
-  - 手動買賣；也可開啟自動交易：主策略出現買進訊號時按設定金額買進，出現賣出訊號或停損時全部賣出
+  - 手動買賣；也可開啟自動交易：主策略出現買進訊號時按設定金額買進，出現賣出訊號、停損或移動停損時全部賣出
   - 手續費 0.1425%（最低 20 元），賣出台股收證交稅 0.3%
   - 現金不足、賣超都會被拒絕；有持股的股票不能從自選股刪除
 - **存檔**：`stock_monitor/data/` 底下的 `watchlist.json`、`settings.json`、`account.json`、`alerts.json`，以及 `monitor.log`
+  （手機版、桌面版另外有 `notify_config.json`（通知 Token）、`web_config.json`（手機網址的 key）；`data/` 不在 git 裡）

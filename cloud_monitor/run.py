@@ -47,6 +47,7 @@ EQUITY_MAX = 5000
 HISTORY_BARS = 240   # 雲端抓 1 年的日 K（約 240 個交易日），均線和策略的天數不能超過
 NOTIFY_DEFAULT = {"enabled": True, "trades": True, "signals": "primary", "price_alerts": True}
 NUMBER_SETTINGS = {"auto_buy_amount": (1, 1_000_000_000), "stop_loss_pct": (0, 100),
+                   "trail_stop_pct": (0, 100),
                    "short_ma": (1, HISTORY_BARS - 1), "long_ma": (2, HISTORY_BARS)}
 # 各段落可以寫的設定（"" 是檔案最上面、還沒有任何 [段落] 標題的地方）
 SECTION_KEYS = {
@@ -54,6 +55,7 @@ SECTION_KEYS = {
     "settings": ["strategies", "auto_trade", *NUMBER_SETTINGS],
     "notify": ["enabled", "trades", "signals", "price_alerts"],
 }
+LIMIT_KEYS = ["lower", "upper", "support"]   # [limits] 每檔可以寫的提醒
 WINDOW_PARAMS = {"short", "long", "n", "fast", "slow", "signal", "entry", "exit"}
 LEVEL_PARAMS = {"low", "high"}
 # 手機輸入法常打出來的全形符號、彎引號：自動當成半形
@@ -314,20 +316,29 @@ def _validate(raw: dict, warnings: list) -> tuple[dict, list]:
             warnings.append(f"「{code}」的上下限格式不對，例：\"2330\" = {{ lower = 900, upper = 1200 }}")
             continue
         for k in v:
-            if k not in ("lower", "upper"):
-                close = difflib.get_close_matches(str(k).lower(), ["lower", "upper"], n=1, cutoff=0.5)
-                warnings.append(f"「{code}」的上下限只能寫 lower、upper，看不懂「{k}」" +
+            if k not in LIMIT_KEYS:
+                close = difflib.get_close_matches(str(k).lower(), LIMIT_KEYS, n=1, cutoff=0.5)
+                warnings.append(f"「{code}」的提醒只能寫 {'、'.join(LIMIT_KEYS)}，看不懂「{k}」" +
                                 (f"，是不是要寫「{close[0]}」？" if close else ""))
         lo, hi = v.get("lower"), v.get("upper")
         bad = [x for x in (lo, hi) if x is not None and (isinstance(x, bool) or not isinstance(x, (int, float)))]
         if bad or (lo is not None and hi is not None and lo >= hi):
             warnings.append(f"「{code}」的上下限要是數字，而且下限要小於上限")
             continue
-        if lo is None and hi is None:
+        sup = v.get("support", [])
+        if not isinstance(sup, list):
+            sup = [sup]
+        if any(isinstance(x, bool) or not isinstance(x, (int, float)) or x <= 0 for x in sup):
+            warnings.append(f"「{code}」的支撐線要寫成數字清單，例：support = [1900, 1850]，先不使用")
+            sup = []
+        if lo is None and hi is None and not sup:
             continue
         if c not in watchlist:
-            warnings.append(f"「{code}」有設上下限，但不在自選股裡，所以不會提醒")
+            what = "上下限" if lo is not None or hi is not None else "支撐線"
+            warnings.append(f"「{code}」有設{what}，但不在自選股裡，所以不會提醒")
         limits[c] = {"lower": lo, "upper": hi}
+        if sup:
+            limits[c]["support"] = sorted({float(x) for x in sup}, reverse=True)
 
     params = {}
     p_raw = raw.get("strategy_params", {})
@@ -606,7 +617,8 @@ def page_data(m, res, now, updated_utc, total, equity, config_errors, held_only,
         "edit_url": EDIT_URL, "config_errors": config_errors, "notes": res.notes,
         "settings": {"strategies": [{"key": k, "name": strat.get(k).name} for k in s["strategies"]],
                      "auto_trade": s["auto_trade"], "auto_buy_amount": s["auto_buy_amount"],
-                     "stop_loss_pct": s["stop_loss_pct"], "short_ma": s["short_ma"],
+                     "stop_loss_pct": s["stop_loss_pct"], "trail_stop_pct": s.get("trail_stop_pct", 0),
+                     "short_ma": s["short_ma"],
                      "long_ma": s["long_ma"]},
         "account": {"initial": a.initial, "cash": round(a.cash, 2),
                     "market_value": round(a.market_value(prices), 2), "total": round(total, 2),

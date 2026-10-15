@@ -35,6 +35,7 @@ def pad(text: str, width: int) -> str:
 
 
 KIND_ICON = {"buy": "🟢", "sell": "🔴", "above": "⬆️ ", "below": "⬇️ ", "stop": "🛑",
+             "trail": "📉", "support": "🔻",
              "golden": "🟢", "death": "🔴"}  # 後兩個是舊版提醒紀錄用的
 
 
@@ -138,6 +139,8 @@ def edit_settings(m: Monitor):
         s["short_ma"], s["long_ma"] = 5, 20
     s["interval"] = max(10, ask(f"更新間隔秒數 [{s['interval']}]: ", int, s["interval"]))
     s["stop_loss_pct"] = ask(f"停損 %（0 = 關閉）[{s['stop_loss_pct']}]: ", float, s["stop_loss_pct"])
+    s["trail_stop_pct"] = ask(f"移動停損 %（從最高價回落，0 = 關閉）[{s.get('trail_stop_pct', 0)}]: ",
+                              float, s.get("trail_stop_pct", 0))
     yn = ask(f"自動模擬交易 y/n [{'y' if s['auto_trade'] else 'n'}]: ", str, "")
     if yn:
         s["auto_trade"] = yn.lower().startswith("y")

@@ -12,7 +12,7 @@ from common.indicators import rsi, sma
 @dataclass
 class Alert:
     code: str
-    kind: str          # buy / sell / above / below / stop
+    kind: str          # buy / sell / above / below / stop / trail / support
     message: str
     strategy: str = ""  # 哪個策略發出的（價格、停損提醒為空）
 
@@ -83,9 +83,46 @@ def snapshot(code: str, df: pd.DataFrame, price: float | None, settings: dict) -
                     float(rsi(closes).iloc[-1]), signals, reasons, date, skipped)
 
 
+def risk_levels(limits: dict, position: dict | None, stop_loss_pct: float,
+                trail_stop_pct: float = 0.0) -> dict:
+    """停損價、移動停損價。
+
+    成本：有模擬持股用持股成本；沒有的話用自選股設定裡手動填的 cost（例如真實持股，只提醒不交易）。
+    每檔可以在自選股設定 stop / trail（%）覆蓋整體的 stop_loss_pct / trail_stop_pct。
+    移動停損：從持有以來的最高價（peak）回落 trail % 就觸發。
+    """
+    limits = limits or {}
+    held = bool(position and position.get("shares", 0) > 0)
+    if held:
+        cost, peak = position["avg_cost"], position.get("peak")
+    else:
+        cost, peak = limits.get("cost"), limits.get("peak")
+    stop_pct = limits.get("stop") if limits.get("stop") is not None else stop_loss_pct
+    trail_pct = limits.get("trail") if limits.get("trail") is not None else trail_stop_pct
+    out = {"held": held, "cost": cost, "peak": None, "stop_pct": stop_pct or 0,
+           "trail_pct": trail_pct or 0, "stop_price": None, "trail_price": None}
+    if not cost:
+        return out
+    out["peak"] = max(peak or cost, cost)
+    if stop_pct:
+        out["stop_price"] = cost * (1 - stop_pct / 100)
+    if trail_pct:
+        out["trail_price"] = out["peak"] * (1 - trail_pct / 100)
+    return out
+
+
+def update_peak(limits: dict, position: dict | None, price: float) -> None:
+    """記錄持有以來的最高價，給移動停損用（模擬持股記在持股裡，手動成本記在自選股設定裡）。"""
+    if position and position.get("shares", 0) > 0:
+        position["peak"] = max(position.get("peak") or position["avg_cost"], price)
+    elif limits and limits.get("cost"):
+        limits["peak"] = max(limits.get("peak") or limits["cost"], price)
+
+
 def evaluate(snap: Snapshot, limits: dict, position: dict | None,
-             stop_loss_pct: float) -> list[Alert]:
+             stop_loss_pct: float, trail_stop_pct: float = 0.0) -> list[Alert]:
     out = []
+    limits = limits or {}
     code, p = snap.code, snap.price
     for key, sig in snap.signals.items():
         if sig == 0:
@@ -101,10 +138,19 @@ def evaluate(snap: Snapshot, limits: dict, position: dict | None,
         out.append(Alert(code, "above", f"{code} 突破上限 {upper}，現價 {p:.2f}"))
     if lower is not None and p <= lower:
         out.append(Alert(code, "below", f"{code} 跌破下限 {lower}，現價 {p:.2f}"))
-    if position and position.get("shares", 0) > 0 and stop_loss_pct > 0:
-        cost = position["avg_cost"]
-        loss = (p / cost - 1) * 100
-        if loss <= -stop_loss_pct:
-            out.append(Alert(code, "stop",
-                             f"{code} 觸發停損：成本 {cost:.2f}，現價 {p:.2f}（{loss:.1f}%）"))
+    # 跌破支撐：昨天收盤還在線上（含剛好碰到），現在跌到線下面
+    prev = snap.prev_close
+    broken = sorted((x for x in limits.get("support") or [] if prev >= x > p), reverse=True)
+    if broken:
+        out.append(Alert(code, "support", f"{code} 跌破支撐線 {'、'.join(f'{x:g}' for x in broken)}，"
+                                          f"現價 {p:.2f}（昨收 {prev:.2f}）"))
+    r = risk_levels(limits, position, stop_loss_pct, trail_stop_pct)
+    if r["stop_price"] is not None and p <= r["stop_price"]:
+        loss = (p / r["cost"] - 1) * 100
+        out.append(Alert(code, "stop",
+                         f"{code} 觸發停損：成本 {r['cost']:.2f}，現價 {p:.2f}（{loss:.1f}%）"))
+    if r["trail_price"] is not None and p <= r["trail_price"]:
+        out.append(Alert(code, "trail",
+                         f"{code} 觸發移動停損：最高 {r['peak']:.2f} 回落 {r['trail_pct']:g}%"
+                         f"（{r['trail_price']:.2f}），現價 {p:.2f}"))
     return out

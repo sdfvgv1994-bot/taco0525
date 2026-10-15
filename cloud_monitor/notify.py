@@ -15,7 +15,8 @@ import os
 
 MONITOR_URL = "https://sdfvgv1994-bot.github.io/taco0525/monitor/"
 MAX_BODY = 3500   # ntfy 單則訊息上限約 4096 位元組
-KIND_ICON = {"buy": "🟢", "sell": "🔴", "above": "⬆️", "below": "⬇️", "stop": "🛑"}
+KIND_ICON = {"buy": "🟢", "sell": "🔴", "above": "⬆️", "below": "⬇️", "stop": "🛑",
+             "trail": "📉", "support": "🔻"}
 
 
 def pick_alerts(alerts: list, primary: str, notify: dict) -> list:
