@@ -1,5 +1,7 @@
 # 策略回測工具
 
+Windows：雙擊 `stock_backtest\啟動回測.bat`，照問題輸入代號、選策略（選最後一項「全部比較」會把所有策略排名次），圖表存在 `stock_backtest\output`。
+
 ```bash
 python stock_backtest/backtest.py 2330                          # 均線交叉 MA5/MA20、近 2 年
 python stock_backtest/backtest.py 2330 -s macd                  # 換成 MACD
