@@ -128,6 +128,20 @@ details.editor[open] > summary::before { content: "▾ "; }
 .btn:disabled { opacity: .5; cursor: default; }
 .ed-msg { margin: 8px 0 0; font-size: 13px; }
 .ed-msg.ok { color: var(--open); } .ed-msg.err { color: var(--rise); }
+.od-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 12px 0 6px; }
+.od-form label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 2px; }
+.od-form select, .od-form input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.od-side { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.od-side button { border: none; background: var(--surface); padding: 6px 14px; cursor: pointer; }
+.od-side button.on.buy { background: var(--rise-x); color: #fff; }
+.od-side button.on.sell { background: var(--fall-x); color: #fff; }
+.od-est { font-size: 12px; color: var(--ink-2); }
+.od-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.od-list li { padding: 6px 0; border-bottom: 1px solid var(--grid); font-size: 13px; display: flex; gap: 8px; flex-wrap: wrap; }
+.od-st { font-size: 12px; border-radius: 999px; padding: 0 8px; border: 1px solid currentColor; white-space: nowrap; }
+.od-st.done { color: var(--open); } .od-st.pending, .od-st.sent { color: var(--accent); }
+.od-st.rejected, .od-st.expired { color: var(--rise); }
 .ed-token { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
 .ed-token ol { margin: 6px 0; padding-left: 20px; }
 .ed-token a { color: inherit; }
@@ -184,6 +198,13 @@ details.editor[open] > summary::before { content: "▾ "; }
     <details class="editor" id="editor">
       <summary>✏️ 新增 / 刪除自選股、設定上下限與支撐線</summary>
       <div id="edBody"><p class="empty">載入中…</p></div>
+    </details>
+  </section>
+
+  <section class="panel ed">
+    <details class="editor" id="orderPanel">
+      <summary>🛒 手動模擬下單</summary>
+      <div id="odBody"><p class="empty">載入中…</p></div>
     </details>
   </section>
 
@@ -326,6 +347,7 @@ function render() {
   if (!data.watch.length) $("watch").replaceChildren(el("div", { class: "empty" }, "自選股是空的，在下面「✏️ 新增 / 刪除自選股」加入"));
   else $("watch").replaceChildren(...data.watch.map(watchCard));
   if ($("editor").open && ED.text == null && !ED.busy) edLoad();
+  if ($("orderPanel").open && !OD.busy && !$("odBody").contains(document.activeElement)) drawOrders();
 
   // 提醒
   const al = $("alerts"); al.replaceChildren();
@@ -479,16 +501,17 @@ function b64enc(s) {
   for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
   return btoa(bin);
 }
-async function gh(method, body) {
+async function gh(method, body, path) {
   const r = repoInfo();
   if (!r) throw new Error("找不到 GitHub 倉庫的位置");
-  const url = `https://api.github.com/repos/${r.owner}/${r.repo}/contents/${r.path}` +
+  const url = `https://api.github.com/repos/${r.owner}/${r.repo}/contents/${path || r.path}` +
     (method === "GET" ? `?ref=${r.branch}&t=${Date.now()}` : "");
   const headers = { Accept: "application/vnd.github+json" };
   if (token()) headers.Authorization = `Bearer ${token()}`;
   const res = await fetch(url, { method, headers, cache: "no-store", body: body ? JSON.stringify({ ...body, branch: r.branch }) : undefined });
   const j = await res.json().catch(() => ({}));
   if (res.ok) return j;
+  if (res.status === 404 && method === "GET" && path) return null;   // 檔案還沒建立
   if (res.status === 401) { ED.needToken = true; throw new Error("權杖錯誤或已過期，請重新貼上一組"); }
   if (res.status === 403 || res.status === 404) { ED.needToken = true; throw new Error("這組權杖不能修改 taco0525（建立時 Contents 要選「Read and write」，倉庫要選 taco0525）"); }
   if (res.status === 409) throw new Error("設定剛剛在別的地方被改過了，請按「重新載入」再改一次");
@@ -711,6 +734,7 @@ function tokenBox() {
     const v = inp.value.trim();
     if (!/^(github_pat_|ghp_)\w{20,}$/.test(v)) return edSay("看起來不是 GitHub 權杖（應該是 github_pat_ 開頭的一長串）", "err");
     token(v); ED.needToken = false;
+    drawOrders();
     if (ED.text == null) await edLoad();
     else edSay("已記住權杖，可以按「儲存」了", "ok");
   };
@@ -719,6 +743,126 @@ function tokenBox() {
     "權杖只存在這個瀏覽器裡，不會出現在網頁或 GitHub 上；這組權杖只能改 taco0525 的檔案。手機遺失時到 GitHub 的同一頁把它刪掉就好。"));
   return box;
 }
+// ---------- 手動模擬下單：訂單寫進 cloud_monitor/orders.json，雲端下一次更新（約 1～3 分鐘）時成交 ----------
+const ORDERS_PATH = "cloud_monitor/orders.json";
+const OD = { side: "buy", busy: false, msg: "", msgKind: "", sent: [] };
+function odSay(msg, kind = "") { OD.msg = msg; OD.msgKind = kind; drawOrders(); }
+const OD_STATUS = { pending: "等待成交", sent: "已送出", done: "已成交", rejected: "被拒絕", expired: "已取消" };
+function drawOrders() {
+  const body = $("odBody");
+  if (!body || !data) return;
+  const keep = {};   // 保留輸入中的值
+  for (const id of ["odCode", "odShares", "odAll"]) if ($(id)) keep[id] = $(id).type === "checkbox" ? $(id).checked : $(id).value;
+  const held = Object.fromEntries((data.positions || []).map((p) => [p.code, p]));
+  const form = el("div", { class: "od-form" });
+  const codeLab = el("label", {}, "股票");
+  const sel = el("select", { id: "odCode" });
+  for (const w of data.watch) {
+    const opt = el("option", { value: w.code }, `${w.code} ${w.name || ""}${held[w.code] ? `（持有 ${held[w.code].shares.toLocaleString()} 股）` : ""}`);
+    sel.append(opt);
+  }
+  if (keep.odCode) sel.value = keep.odCode;
+  codeLab.append(sel);
+  const side = el("div", { class: "od-side", role: "group", "aria-label": "買賣" });
+  for (const [k, t] of [["buy", "買進"], ["sell", "賣出"]]) {
+    const b = el("button", { class: `${k} ${OD.side === k ? "on" : ""}`, type: "button" }, t);
+    b.onclick = () => { OD.side = k; drawOrders(); };
+    side.append(b);
+  }
+  const shLab = el("label", {}, "股數（1 張 = 1000 股）");
+  const sh = el("input", { id: "odShares", inputmode: "numeric", placeholder: "例 1000", value: keep.odShares || "" });
+  shLab.append(sh);
+  form.append(codeLab, side, shLab);
+  let all = null;
+  if (OD.side === "sell") {
+    const allLab = el("label", { style: "flex-direction:row;align-items:center;gap:4px;font-size:13px;color:var(--ink);white-space:nowrap" });
+    all = el("input", { type: "checkbox", id: "odAll" });
+    all.checked = keep.odAll !== undefined ? keep.odAll : true;
+    allLab.append(all, document.createTextNode("全部賣出"));
+    form.append(allLab);
+    sh.disabled = all.checked;
+    all.onchange = () => { sh.disabled = all.checked; est(); };
+  }
+  const send = el("button", { class: "btn primary", type: "button" }, OD.busy ? "送出中…" : (OD.side === "buy" ? "送出買單" : "送出賣單"));
+  send.disabled = OD.busy;
+  send.onclick = odSend;
+  form.append(send);
+  const estLine = el("div", { class: "od-est" });
+  function est() {
+    const w = data.watch.find((x) => x.code === sel.value);
+    const n = parseInt(sh.value, 10);
+    const p = w && w.price;
+    const sellAll = all && all.checked;
+    let t = p ? `目前價格 ${fmt(p)}` : "目前沒有價格";
+    const qty = sellAll ? (held[sel.value]?.shares || 0) : n;
+    if (OD.side === "sell" && !held[sel.value]) t += "，這檔目前沒有持股";
+    else if (p && qty > 0) {
+      const amt = p * qty;
+      const fee = Math.max(20, amt * 0.001425);
+      t += OD.side === "buy" ? `，約需 ${money(amt + fee)} 元（含手續費）；現金 ${money(data.account.cash)}`
+                             : `，約可拿回 ${money(amt - fee - (w.tw ? amt * 0.003 : 0))} 元`;
+    }
+    estLine.textContent = t + "。實際以下一次雲端更新時的價格成交。";
+  }
+  sel.onchange = est; sh.oninput = est; est();
+  // 訂單狀態：雲端回報的 + 剛送出、雲端還沒處理的
+  const list = el("ul", { class: "od-list" });
+  const known = new Set((data.orders || []).map((o) => o.id));
+  const rows = [...OD.sent.filter((o) => !known.has(o.id)).map((o) => ({ ...o, status: "sent", message: "等雲端處理（約 1～3 分鐘）" })),
+                ...(data.orders || [])];
+  for (const o of rows.slice(0, 20)) {
+    const li = el("li");
+    li.append(el("span", { class: `od-st ${o.status}` }, OD_STATUS[o.status] || o.status),
+              el("span", { class: "t" }, (o.handled || o.time || "").replace("T", " ").slice(5, 16)),
+              el("b", {}, `${o.side === "buy" ? "買" : "賣"} ${o.code}`),
+              el("span", {}, o.message || (o.shares ? `${Number(o.shares).toLocaleString()} 股` : "全部")));
+    list.append(li);
+  }
+  if (!rows.length) list.append(el("li", { class: "empty" }, "還沒有手動訂單"));
+  const msg = el("p", { class: "ed-msg " + OD.msgKind }, OD.msg);
+  const foot = el("p", { class: "foot" }, "送出後雲端會馬上重新跑一次（約 1～3 分鐘），用那時候的價格成交；不在交易時間就等開盤後的第一次更新。" +
+    "一樣扣手續費、賣出台股扣證交稅；現金或股數不夠會被拒絕。這是模擬下單，不會真的買賣。");
+  body.replaceChildren(form, estLine, msg);
+  if (!token()) body.append(tokenBox());
+  body.append(list, foot);
+}
+async function odSend() {
+  const code = $("odCode").value, sellAll = OD.side === "sell" && $("odAll") && $("odAll").checked;
+  const shares = sellAll ? null : parseInt($("odShares").value, 10);
+  if (!code) return odSay("請選一檔股票", "err");
+  if (!sellAll && !(shares > 0)) return odSay("請輸入股數（1 張 = 1000 股）", "err");
+  if (OD.side === "sell" && !(data.positions || []).some((p) => p.code === code)) return odSay(`${code} 目前沒有持股，不能賣`, "err");
+  if (!token()) { ED.needToken = true; return odSay("第一次下單要先設定 GitHub 權杖（看下面的步驟）", "err"); }
+  const what = `${OD.side === "buy" ? "買進" : "賣出"} ${code} ${sellAll ? "全部" : shares.toLocaleString() + " 股"}`;
+  OD.busy = true; odSay(`送出「${what}」…`);
+  try {
+    const now = new Date();
+    const order = { id: `${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+                    time: new Date(now.getTime() + 8 * 3600e3).toISOString().slice(0, 19),   // 台北時間
+                    code, side: OD.side, shares };
+    for (let attempt = 0; attempt < 2; attempt++) {   // 剛好有別的修改時重試一次
+      const cur = await gh("GET", null, ORDERS_PATH);
+      let list = [];
+      try { list = cur ? JSON.parse(b64dec(cur.content)) : []; } catch (e) { list = []; }
+      if (!Array.isArray(list)) list = [];
+      // 已經處理完的舊訂單從檔案裡拿掉（結果留在雲端的紀錄裡），檔案才不會越來越長
+      const finished = new Set((data.orders || []).filter((o) => o.status !== "pending").map((o) => o.id));
+      list = list.filter((o) => !finished.has(o.id)).concat([order]);
+      try {
+        await gh("PUT", { message: `手機模擬下單：${what}`, content: b64enc(JSON.stringify(list, null, 1) + "\n"),
+                          ...(cur ? { sha: cur.sha } : {}) }, ORDERS_PATH);
+        break;
+      } catch (e) {
+        if (attempt || !/別的地方被改過/.test(e.message)) throw e;
+      }
+    }
+    OD.sent.unshift(order); OD.busy = false;
+    if ($("odShares")) $("odShares").value = "";
+    odSay(`✅ 已送出「${what}」，雲端約 1～3 分鐘後成交，這一頁會自動更新。`, "ok");
+  } catch (e) { OD.busy = false; odSay(e.message, "err"); }
+}
+$("orderPanel").addEventListener("toggle", () => { if ($("orderPanel").open) drawOrders(); });
+
 $("editor").addEventListener("toggle", () => { if ($("editor").open && ED.text == null && !ED.busy && data) edLoad(); });
 
 applyPrefs();

@@ -59,7 +59,7 @@ def run_once(tmp_path, config, feed, now, names=None):
 def test_default_config_is_valid():
     cfg, warnings = cm.load_config(cm.CONFIG)
     assert not warnings
-    assert "2330" in cfg["watchlist"] and cfg["settings"]["strategies"][0] == "ma"
+    assert "2330" in cfg["watchlist"] and cfg["settings"]["strategies"]   # 使用者會自己改策略，只檢查格式正確
     assert cfg["limits"]["2330"]["upper"] > cfg["limits"]["2330"]["lower"]
 
 
@@ -485,3 +485,48 @@ def test_workflow_keeps_last_page_and_detects_missing_branch():
     assert "keep_last.py" in keep["run"] and "steps.save.outcome != 'success'" in keep["if"]
     names = [s.get("id") or s.get("name") or s.get("uses") for s in wf["jobs"]["build"]["steps"]]
     assert names.index("雲端看盤沒成功時，保留上一次的網頁") < names.index("actions/upload-pages-artifact@v3")
+
+
+# ---------- 手動模擬下單（網頁寫 orders.json，雲端下一次更新時成交） ----------
+def write_orders(tmp_path, orders):
+    (tmp_path / "orders.json").write_text(json.dumps(orders), encoding="utf-8")
+
+
+def test_manual_orders_fill_once_in_trading_hours(tmp_path):
+    cfg = write_config(tmp_path / "c.toml", BASE.replace("auto_trade = true", "auto_trade = false"))
+    feed = Feed()
+    write_orders(tmp_path, [
+        {"id": "a", "time": "2026-10-08T09:55:00", "code": "2330", "side": "buy", "shares": 1000},
+        {"id": "b", "time": "2026-10-08T09:55:00", "code": "AAPL", "side": "buy", "shares": 10},   # 美股休市
+        {"id": "c", "time": "2026-10-08T09:55:00", "code": "9999", "side": "buy", "shares": 1},    # 不在自選股
+        {"id": "d", "time": "2026-10-08T09:55:00", "code": "2330", "side": "buy", "shares": 10 ** 6},  # 現金不足
+    ])
+    data = run_once(tmp_path, cfg, feed, TW_OPEN)
+    st = {o["id"]: o for o in data["orders"]}
+    assert st["a"]["status"] == "done" and st["a"]["price"] == 100
+    assert st["b"]["status"] == "pending" and "交易時間" in st["b"]["message"]
+    assert st["c"]["status"] == "rejected" and "自選股" in st["c"]["message"]
+    assert st["d"]["status"] == "rejected" and "現金不足" in st["d"]["message"]
+    assert data["positions"][0]["code"] == "2330" and data["positions"][0]["shares"] == 1000
+    assert data["trades"][0]["reason"] == "手動（雲端網頁）"
+
+    data = run_once(tmp_path, cfg, feed, TW_OPEN.replace(minute=15))      # 同一張訂單不會再成交一次
+    assert data["positions"][0]["shares"] == 1000 and len(data["trades"]) == 1
+    assert {o["id"]: o["status"] for o in data["orders"]}["b"] == "pending"
+
+    data = run_once(tmp_path, cfg, feed, TW_NIGHT)                        # 美股開盤：AAPL 成交
+    assert {o["id"]: o["status"] for o in data["orders"]}["b"] == "done"
+
+    write_orders(tmp_path, [{"id": "e", "time": "2026-10-09T10:00:00", "code": "2330", "side": "sell", "shares": None}])
+    data = run_once(tmp_path, cfg, feed, datetime(2026, 10, 9, 10, 0))
+    assert {o["id"]: o["status"] for o in data["orders"]}["e"] == "done"
+    assert all(p["code"] != "2330" for p in data["positions"])
+
+
+def test_manual_order_expires_and_bad_file_ignored(tmp_path):
+    cfg = write_config(tmp_path / "c.toml", BASE)
+    (tmp_path / "orders.json").write_text("{壞掉", encoding="utf-8")
+    assert run_once(tmp_path, cfg, Feed(), TW_OPEN)["orders"] == []
+    write_orders(tmp_path, [{"id": "x", "time": "2026-10-01T10:00:00", "code": "AAPL", "side": "buy", "shares": 1}])
+    data = run_once(tmp_path, cfg, Feed(), SATURDAY)
+    assert data["orders"][0]["status"] == "expired"

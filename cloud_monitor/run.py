@@ -437,6 +437,77 @@ def session_date(name: str, now: datetime) -> str | None:
     return now.replace(tzinfo=TPE).astimezone(ZoneInfo(EXCHANGES[ex].tz)).strftime("%Y-%m-%d")
 
 
+# ---------------------------------------------------------------- 手動下單
+ORDER_KEEP = 50          # data.json 裡保留最近幾筆下單結果
+ORDER_EXPIRE_DAYS = 5    # 這麼多天都沒成交（例如一直休市）就取消
+
+
+def load_orders(path: Path) -> list:
+    """網頁「手動下單」寫進 cloud_monitor/orders.json 的訂單。格式不對的略過。"""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [o for o in (raw if isinstance(raw, list) else []) if isinstance(o, dict) and o.get("id")]
+
+
+def process_orders(m, res, store, orders: list, now: datetime, log=print) -> list:
+    """執行還沒處理過的手動訂單：只在該市場交易時間內、用這次抓到的價格成交。
+    處理結果存在 monitor-data 的 orders.json（同一張訂單只會成交一次）。回傳最近的結果給網頁。"""
+    from stock_monitor.account import TradeError
+
+    done = store.load("orders.json", [])
+    seen = {d["id"] for d in done}
+    pending = []
+    for o in orders:
+        oid = str(o["id"])
+        if oid in seen:
+            continue
+        code = str(o.get("code", "")).strip().upper()
+        side = o.get("side")
+        rec = {"id": oid, "time": str(o.get("time", ""))[:19], "code": code, "side": side,
+               "shares": o.get("shares")}
+        try:
+            placed = datetime.fromisoformat(rec["time"]) if rec["time"] else now
+        except ValueError:
+            placed = now
+        try:
+            shares = None if side == "sell" and o.get("shares") in (None, "", "all") else int(o.get("shares"))
+            if side not in ("buy", "sell"):
+                raise ValueError("買賣方向不對")
+            if shares is not None and shares <= 0:
+                raise ValueError("股數要大於 0")
+            if code not in m.watchlist:
+                raise ValueError("不在自選股裡，請先加入自選股")
+            if code not in res.snapshots:
+                raise LookupError(res.errors.get(code) or "這次沒有抓到報價")
+            if code in res.inactive:
+                raise LookupError("不在交易時間，等開盤後的第一次更新成交")
+            if side == "buy":
+                t = m.manual_buy(code, shares, reason="手動（雲端網頁）")
+            else:
+                t = m.manual_sell(code, shares, reason="手動（雲端網頁）")
+        except LookupError as e:   # 還不能成交：留著下次再試
+            if (now - placed).days >= ORDER_EXPIRE_DAYS:
+                rec.update(status="expired", message=f"{ORDER_EXPIRE_DAYS} 天都沒成交，已取消（{e.args[0]}）")
+            else:
+                rec.update(status="pending", message=e.args[0])
+                pending.append(rec)
+                continue
+        except (ValueError, TypeError, TradeError) as e:
+            rec.update(status="rejected", message=str(e.args[0] if e.args else e))
+        else:
+            rec.update(status="done", price=t["price"], shares=t["shares"], fee=t["fee"], tax=t["tax"],
+                       message=f"{t['side']} {t['shares']:,} 股 @ {t['price']:,.2f}"
+                               + (f"，損益 {t['pnl']:+,.0f}" if "pnl" in t else ""))
+            res.trades.append(t)
+        rec["handled"] = f"{now:%Y-%m-%d %H:%M}"
+        done.append(rec)
+        log(f"手動訂單 {code} {side}：{rec['status']} {rec.get('message', '')}")
+    store.save("orders.json", done[-500:])
+    return list(reversed(pending)) + list(reversed(done[-ORDER_KEEP:]))
+
+
 # ---------------------------------------------------------------- 執行
 def prefetch_names(m, now: datetime, log=print) -> None:
     """還沒有股名的台股，向證交所 / 櫃買中心查一次當月資料，從標題取出股名（之後存在 names.json）。
@@ -473,7 +544,8 @@ def finite(x):
 
 
 def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetime | None = None,
-        monitor_kwargs: dict | None = None, log=print, fetch_names: bool = True) -> dict:
+        monitor_kwargs: dict | None = None, log=print, fetch_names: bool = True,
+        orders_path: Path | None = None) -> dict:
     now = now or datetime.now(TPE).replace(tzinfo=None)
     store = Store(state_dir)
     config_errors = []
@@ -506,6 +578,8 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     if fetch_names:
         prefetch_names(m, now, log)
     res = m.refresh(now)
+    orders = process_orders(m, res, store, load_orders(orders_path or Path(config_path).parent / "orders.json"),
+                            now, log)
 
     # 這次抓不到報價的持股用上一次的價格計算（不然會被當成成本價，資產走勢出現假的跳動）
     stamp = f"{now:%Y-%m-%d %H:%M}"
@@ -532,6 +606,7 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     data = page_data(m, res, now, updated_utc, total, equity, config_errors, held_only,
                      prices, {c: v["time"] for c, v in known.items()})
     data["settings"]["notify"] = {**notify_cfg, "status": notify_status}
+    data["orders"] = orders
     data = finite(data)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
