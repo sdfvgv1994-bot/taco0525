@@ -56,7 +56,7 @@ SECTION_KEYS = {
     "notify": ["enabled", "trades", "signals", "price_alerts"],
 }
 LIMIT_KEYS = ["lower", "upper", "support"]   # [limits] 每檔可以寫的提醒
-WINDOW_PARAMS = {"short", "long", "n", "fast", "slow", "signal", "entry", "exit"}
+WINDOW_PARAMS = {"short", "long", "n", "fast", "slow", "signal", "entry", "exit", "swing"}
 LEVEL_PARAMS = {"low", "high"}
 # 手機輸入法常打出來的全形符號、彎引號：自動當成半形
 FULLWIDTH = {"“": '"', "”": '"', "„": '"', "＂": '"', "‘": "'", "’": "'", "＇": "'",
@@ -187,7 +187,7 @@ def _synthetic(n: int) -> pd.DataFrame:
     """檢查策略參數用的假日 K（有漲有跌）。"""
     x = np.arange(n, dtype=float)
     c = pd.Series(100 + 10 * np.sin(x / 7) + x * 0.05)
-    return pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 0.0})
+    return pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 1000.0})
 
 
 def check_strategy(key: str, params: dict, settings: dict) -> str | None:

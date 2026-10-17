@@ -193,7 +193,7 @@ def _dummy_df(st):
     import pandas as pd
     n = 400
     c = pd.Series(range(1, n + 1), dtype=float)
-    return pd.DataFrame({"Open": c, "High": c, "Low": c, "Close": c})
+    return pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 1000.0})
 
 
 def loop(m: Monitor):

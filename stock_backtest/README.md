@@ -4,7 +4,7 @@
 python stock_backtest/backtest.py 2330                          # 均線交叉 MA5/MA20、近 2 年
 python stock_backtest/backtest.py 2330 -s macd                  # 換成 MACD
 python stock_backtest/backtest.py 2330 -s rsi -p low=25 -p high=75
-python stock_backtest/backtest.py 2330 --compare                # 6 種策略一起比，排名次
+python stock_backtest/backtest.py 2330 --compare                # 8 種策略一起比，排名次
 python stock_backtest/backtest.py --list                        # 列出所有策略與預設參數
 python stock_backtest/backtest.py AAPL -s kd --stop-loss 8 --trailing 12
 python stock_backtest/backtest.py                               # 互動模式，一題一題問
@@ -21,8 +21,13 @@ python stock_backtest/backtest.py 2330 --demo                   # 示範資料�
 | `kd` | KD 指標 | D < low 時 K 往上穿過 D | D > high 時 K 往下穿過 D | n=9 low=30 high=70 |
 | `bbands` | 布林通道 | 收盤跌破下軌後收回 | 收盤突破上軌 | n=20 k=2 |
 | `breakout` | 突破新高（海龜） | 收盤創 entry 日新高 | 收盤跌破 exit 日新低 | entry=20 exit=10 |
+| `smc` | SMC 市場結構 | 空頭時收盤突破前波高點（結構轉多 CHoCH） | 多頭時收盤跌破前波低點（結構轉空） | swing=5 |
+| `orderflow` | 訂單流（日 K 估算） | 累積量差（CVD）快線上穿慢線 | 快線下穿慢線 | fast=5 slow=20 |
 
-- 趨勢型：`ma`、`macd`、`breakout`；抄底 / 反轉型：`rsi`、`kd`、`bbands`。
+- 趨勢型：`ma`、`macd`、`breakout`、`smc`；抄底 / 反轉型：`rsi`、`kd`、`bbands`；量能型：`orderflow`。
+- `smc` 的擺動高低點 = 前後各 swing 根 K 棒裡最高 / 最低的，要等右邊 swing 根走完才確認，不會偷看未來。
+- `orderflow` 不是真正的逐筆訂單流（需要內外盤成交資料）：用每根 K 棒收在高低區間的位置 × 成交量估算買賣量差，
+  沒有成交量的代號（部分指數）不能用。
   反轉型策略遇到長期下跌容易被套，建議搭配停損。
 - KD 用台灣常見算法（RSV 9 日、1/3 平滑）。低高檔預設 30/70，想更嚴格可用 `-p low=20 -p high=80`。
 

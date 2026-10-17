@@ -119,6 +119,64 @@ def _breakout(df, entry, exit):
                   buy_reason=f"突破 {entry:g} 日新高", sell_reason=f"跌破 {exit:g} 日新低")
 
 
+def _smc(df, swing):
+    """SMC（Smart Money Concepts）市場結構。
+
+    擺動高點 / 低點：前後各 swing 根 K 棒裡最高 / 最低的那一根，要等右邊 swing 根走完才算確認（不偷看未來）。
+    空頭（或還沒有方向）時，收盤突破最近確認的擺動高點 = 結構轉多（CHoCH）→ 買；
+    多頭時，收盤跌破最近確認的擺動低點 = 結構轉空（CHoCH）→ 賣。
+    同方向的突破（BOS）只代表趨勢延續，不重複出訊號。
+    """
+    n = int(swing)
+    h, l, c = df["High"], df["Low"], df["Close"]
+    win = 2 * n + 1
+    is_hi = h.rolling(win, center=True).max() == h
+    is_lo = l.rolling(win, center=True).min() == l
+    swing_hi = h.where(is_hi).shift(n).ffill()   # 第 i 天才知道的擺動高點（往右 n 根已經走完）
+    swing_lo = l.where(is_lo).shift(n).ffill()
+    prev_hi, prev_lo = swing_hi.shift(1), swing_lo.shift(1)   # 今天之前就已經確認的結構
+    sig = pd.Series(0, index=df.index)
+    trend, used_hi, used_lo = 0, None, None
+    for i in range(len(df)):
+        hi, lo, close = prev_hi.iloc[i], prev_lo.iloc[i], c.iloc[i]
+        if pd.notna(hi) and close > hi and hi != used_hi:
+            used_hi = hi
+            if trend <= 0:
+                sig.iloc[i] = 1
+            trend = 1
+        elif pd.notna(lo) and close < lo and lo != used_lo:
+            used_lo = lo
+            if trend >= 0:
+                sig.iloc[i] = -1
+            trend = -1
+    return Output(sig, overlays={"Swing high": swing_hi, "Swing low": swing_lo},
+                  buy_reason="SMC 結構轉多（突破前波高點）", sell_reason="SMC 結構轉空（跌破前波低點）")
+
+
+def _orderflow(df, fast, slow):
+    """訂單流（用日 K 估算）。
+
+    真正的訂單流要逐筆成交的內外盤資料；這裡用每根 K 棒收在高低區間的哪裡估算買賣力道：
+        量差 delta = 成交量 ×（2×收盤 − 最高 − 最低）÷（最高 − 最低）   收在最高 = 全部算買方，收在最低 = 全部算賣方
+        累積量差 CVD = delta 一天天加起來
+    CVD 的快線往上穿過慢線 = 買方力道轉強 → 買；往下穿過 = 賣方力道轉強 → 賣。
+    """
+    if fast >= slow:
+        raise ValueError("訂單流快線天數必須小於慢線")
+    if "Volume" not in df or not (df["Volume"].fillna(0) > 0).any():
+        raise ValueError("訂單流需要成交量資料")
+    h, l, c, v = df["High"], df["Low"], df["Close"], df["Volume"].fillna(0)
+    rng = (h - l).replace(0, float("nan"))
+    delta = (((2 * c - h - l) / rng).fillna(0) * v)
+    cvd = delta.cumsum()
+    f, s = ind.ema(cvd, int(fast)), ind.ema(cvd, int(slow))
+    sig = ind.cross(f, s)
+    sig.iloc[: int(slow)] = 0   # EMA 還沒穩定
+    return Output(sig, panel={"CVD": cvd, f"CVD EMA{fast:g}": f, f"CVD EMA{slow:g}": s},
+                  buy_reason="訂單流買方力道轉強（累積量差快線上穿慢線）",
+                  sell_reason="訂單流賣方力道轉強（累積量差快線下穿慢線）")
+
+
 STRATEGIES: dict[str, Strategy] = {s.key: s for s in [
     Strategy("ma", "均線交叉", "短均線往上穿過長均線買，往下穿過賣",
              {"short": 5, "long": 20}, _ma, lambda p: p["long"]),
@@ -132,6 +190,10 @@ STRATEGIES: dict[str, Strategy] = {s.key: s for s in [
              {"n": 20, "k": 2}, _bbands, lambda p: p["n"]),
     Strategy("breakout", "突破新高", "收盤創 N 日新高買，跌破 M 日新低賣（海龜法則）",
              {"entry": 20, "exit": 10}, _breakout, lambda p: max(p["entry"], p["exit"])),
+    Strategy("smc", "SMC 市場結構", "結構轉多（收盤突破前波高點）買，結構轉空（收盤跌破前波低點）賣",
+             {"swing": 5}, _smc, lambda p: 2 * p["swing"] + 1),
+    Strategy("orderflow", "訂單流", "用日 K 估算買賣量差，累積量差的快線上穿慢線買，下穿賣（需要成交量）",
+             {"fast": 5, "slow": 20}, _orderflow, lambda p: p["slow"]),
 ]}
 
 

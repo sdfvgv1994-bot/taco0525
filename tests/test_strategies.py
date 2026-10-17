@@ -52,7 +52,7 @@ def test_kd_first_value_follows_taiwan_formula():
 
 # ---------- 策略 ----------
 def test_registry_and_lookup():
-    assert set(strat.STRATEGIES) == {"ma", "macd", "rsi", "kd", "bbands", "breakout"}
+    assert set(strat.STRATEGIES) == {"ma", "macd", "rsi", "kd", "bbands", "breakout", "smc", "orderflow"}
     assert strat.get("MACD").key == "macd"
     with pytest.raises(ValueError):
         strat.get("nope")
@@ -133,7 +133,7 @@ def test_every_strategy_backtests_on_demo(key):
 def test_compare_sorted():
     results = compare(demo_history("2330.TW", 500))
     rets = [r.stats["策略報酬%"] for r in results]
-    assert rets == sorted(rets, reverse=True) and len(results) == 6
+    assert rets == sorted(rets, reverse=True) and len(results) == len(strat.STRATEGIES)
 
 
 def test_cli_strategy_with_params(tmp_path, monkeypatch, capsys):
@@ -160,3 +160,37 @@ def test_cli_bad_strategy(capsys):
 def test_cli_list(capsys):
     assert cli.main(["--list"]) == 0
     assert "bbands" in capsys.readouterr().out
+
+
+# ---------- SMC、訂單流 ----------
+@pytest.mark.parametrize("key", ["smc", "orderflow"])
+def test_new_strategies_do_not_look_ahead(key):
+    """拿到後面的資料，前面已經出現的訊號不能改變（不偷看未來）。"""
+    df = demo_history("2317.TW", 400)
+    full = strat.get(key).run(df).signal
+    part = strat.get(key).run(df.iloc[:300]).signal
+    assert (full.iloc[:300] == part).all()
+    assert (full == 1).any() and (full == -1).any()
+
+
+def test_smc_signals_alternate_and_break_structure():
+    df = demo_history("2330.TW", 500)
+    out = strat.get("smc").run(df)
+    sig = out.signal[out.signal != 0]
+    assert (sig.diff().fillna(1) != 0).all()          # 買賣交替（結構轉變才出訊號）
+    prev_hi = out.overlays["Swing high"].shift(1)
+    buys = out.signal == 1
+    assert (df["Close"][buys] > prev_hi[buys]).all()
+
+
+def test_orderflow_needs_volume_and_follows_delta():
+    df = demo_history("2454.TW", 300)
+    with pytest.raises(ValueError):
+        strat.get("orderflow").run(df.drop(columns="Volume"))
+    with pytest.raises(ValueError):
+        strat.get("orderflow").run(df, fast=20, slow=5)
+    # 每天都收在最高價 → 量差全是正的，累積量差一路往上
+    c = pd.Series(range(100, 160), dtype=float)
+    up = pd.DataFrame({"Open": c - 1, "High": c, "Low": c - 2, "Close": c, "Volume": 1000.0})
+    out = strat.get("orderflow").run(up)
+    assert out.panel["CVD"].is_monotonic_increasing
