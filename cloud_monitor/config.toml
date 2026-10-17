@@ -14,7 +14,7 @@ watchlist = ["2330", "0050", "2454", "2317", "AAPL", "NVDA", "6274","8345","2882
 # 策略（第一個是「主策略」，自動交易只跟它；其他的只顯示訊號）
 #   ma 均線交叉、macd MACD、rsi RSI 超買超賣、kd KD 指標、bbands 布林通道、breakout 突破新高、
 #   smc SMC 市場結構、orderflow 訂單流（用日 K 估算）
-strategies = ["ma", "macd"]
+  strategies = ["smc", "ma", "orderflow"]
 
 auto_trade = true          # 自動模擬交易：true 開、false 關
 auto_buy_amount = 100000   # 主策略出現買進訊號時，每次買進的金額
