@@ -5,5 +5,12 @@
   "code": "2882",
   "side": "buy",
   "shares": 5000
+ },
+ {
+  "id": "mvckb56o-nzw4",
+  "time": "2026-10-17T23:39:28",
+  "code": "AAPL",
+  "side": "buy",
+  "shares": 500
  }
 ]
