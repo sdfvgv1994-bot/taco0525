@@ -1,7 +1,8 @@
 {
   "strategies": [
+    "smc",
     "ma",
-    "macd"
+    "orderflow"
   ],
   "strategy_params": {},
   "short_ma": 5,
