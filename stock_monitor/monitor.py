@@ -1,5 +1,8 @@
 """自動看盤系統（含模擬下單）。
 
+開啟雲端帳戶時（預設，和桌面版、手機版相同），帳戶、自選股、策略以雲端看盤為準：
+文字版每次更新先讀雲端，下單和改設定寫回雲端；自動交易只由雲端做。
+
 執行：python stock_monitor/monitor.py          （真實資料，需能連 Yahoo Finance）
       python stock_monitor/monitor.py --demo   （示範資料，不連網）
 """
@@ -22,6 +25,7 @@ from common import strategies as strat  # noqa: E402
 from common.market import parse_symbol, uses_twse  # noqa: E402
 from stock_monitor.account import TradeError  # noqa: E402
 from stock_monitor.engine import Monitor  # noqa: E402
+from stock_monitor.live import LiveMonitor  # noqa: E402
 from stock_monitor.storage import Store  # noqa: E402
 
 def dwidth(text: str) -> int:
@@ -129,7 +133,9 @@ def ask(prompt: str, cast=str, default=None, allow_empty=False):
             print("格式不對，請再輸入一次")
 
 
-def edit_settings(m: Monitor):
+def edit_settings(m: Monitor, live: LiveMonitor):
+    if live.cloud.enabled:
+        return edit_cloud_settings(m, live)
     s = m.settings
     print("\n=== 設定（直接按 Enter 保持不變）===")
     s["short_ma"] = ask(f"短均線天數 [{s['short_ma']}]: ", int, s["short_ma"])
@@ -149,7 +155,32 @@ def edit_settings(m: Monitor):
     print("已儲存")
 
 
-def edit_strategies(m: Monitor):
+def edit_cloud_settings(m: Monitor, live: LiveMonitor):
+    s = m.settings
+    print("\n=== 設定（雲端帳戶，直接按 Enter 保持不變）===")
+    v = {"short": ask(f"短均線天數 [{s['short_ma']}]: ", int, s["short_ma"]),
+         "long": ask(f"長均線天數 [{s['long_ma']}]: ", int, s["long_ma"]),
+         "interval": max(15, ask(f"更新間隔秒數 [{s['interval']}]: ", int, s["interval"])),
+         "stop_loss_pct": ask(f"停損 %（0 = 關閉）[{s['stop_loss_pct']}]: ", float, s["stop_loss_pct"]),
+         "trail_stop_pct": ask(f"移動停損 %（0 = 關閉）[{s.get('trail_stop_pct', 0)}]: ",
+                               float, s.get("trail_stop_pct", 0)),
+         "budget": ask(f"自動買進金額 [{s['auto_buy_amount']:g}]: ", float, s["auto_buy_amount"])}
+    yn = ask(f"雲端自動模擬交易 y/n [{'y' if live.cloud_auto else 'n'}]: ", str, "")
+    v["auto_trade"] = yn.lower().startswith("y") if yn else live.cloud_auto
+    with live.lock:
+        live.update_settings(v)
+    print_cloud_log(live)
+
+
+def print_cloud_log(live: LiveMonitor, since: int = 0):
+    """印出雲端相關的新紀錄（送出訂單、改設定、雲端成交、連線錯誤）。"""
+    for item in reversed(live.logs):
+        if item["id"] > since and item["msg"].startswith("☁"):
+            print("  " + item["msg"])
+    return live.log_seq
+
+
+def edit_strategies(m: Monitor, live: LiveMonitor):
     keys = list(strat.STRATEGIES)
     cur = m.settings["strategies"]
     print("\n=== 策略設定 ===")
@@ -165,7 +196,15 @@ def edit_strategies(m: Monitor):
         except (ValueError, IndexError):
             print("⚠ 編號不對，策略沒有變更")
             return
+        if live.cloud.enabled:
+            with live.lock:
+                live.update_settings({"strategies": picked})
+            print_cloud_log(live)
+            print("策略參數請在雲端的 config.toml [strategy_params] 調整")
+            return
         m.set_strategies(picked)
+    if live.cloud.enabled:
+        return
     yn = ask("要調整策略參數嗎？y/n [n]: ", str, "n")
     if yn.lower().startswith("y"):
         sp = m.settings.setdefault("strategy_params", {})
@@ -196,11 +235,19 @@ def _dummy_df(st):
     return pd.DataFrame({"Open": c, "High": c * 1.01, "Low": c * 0.99, "Close": c, "Volume": 1000.0})
 
 
-def loop(m: Monitor):
+def update(m: Monitor, live: LiveMonitor):
+    """先讀雲端帳戶（有開的話），再抓報價。"""
+    seen = live.log_seq
+    live.cloud_pull()
+    print_cloud_log(live, seen)
+    return m.refresh()
+
+
+def loop(m: Monitor, live: LiveMonitor):
     print(f"開始自動看盤，每 {m.settings['interval']} 秒更新，按 Ctrl+C 回選單")
     try:
         while True:
-            show_quotes(m, m.refresh())
+            show_quotes(m, update(m, live))
             time.sleep(m.settings["interval"])
     except KeyboardInterrupt:
         print("\n停止自動看盤")
@@ -216,7 +263,8 @@ MENU = """
  0 離開
 自選股：{watch}
 策略：{strategies}
-自動交易：{auto}   資料：{src}"""
+自動交易：{auto}   資料：{src}
+帳戶：{account}"""
 
 
 def main(argv=None):
@@ -230,7 +278,12 @@ def main(argv=None):
     m = Monitor(Store(args.data))
     m.settings["demo"] = args.demo  # 每次執行由參數決定，不沿用上次
     m.settings["source"] = args.source
-    if not m.watchlist:
+    live = LiveMonitor(args.data, monitor=m, source="文字版", cloud=False if args.demo else None)
+    if live.cloud.enabled:
+        print("使用雲端帳戶（和雲端看盤、桌面版、手機版同一個帳戶），讀取中…")
+        live.cloud_pull()
+        print_cloud_log(live)
+    if not m.watchlist and not live.cloud.enabled:
         for code in ("2330", "0050"):
             m.add(code)
         print("第一次使用，先幫你加入 2330、0050 當自選股")
@@ -239,27 +292,53 @@ def main(argv=None):
         names = [strat.get(k).name for k in m.settings["strategies"]]
         names[0] = f"★{names[0]}"
         print(MENU.format(watch=", ".join(m.watchlist) or "（空）", strategies="、".join(names),
-                          auto="開" if m.settings["auto_trade"] else "關",
+                          auto=("開" if (live.cloud_auto if live.cloud.enabled else m.settings["auto_trade"])
+                                else "關") + ("（雲端每 15 分鐘）" if live.cloud.enabled else ""),
+                          account=("☁ 雲端帳戶" + ("" if live.cloud.has_token else "（沒有 GitHub 權杖：只能看，"
+                                   "要下單請先在桌面版「雲端帳戶…」設定）")) if live.cloud.enabled else "本機",
                           src="示範" if m.settings["demo"] else
                           {"auto": "證交所（台股）＋ Yahoo（其他）", "twse": "證交所",
                            "yahoo": "Yahoo Finance"}[m.settings["source"]]))
         try:
             choice = input("> ").strip()
+            cloud = live.cloud.enabled
+            seen = live.log_seq
             if choice == "1":
-                show_quotes(m, m.refresh())
+                show_quotes(m, update(m, live))
             elif choice == "2":
-                loop(m)
+                loop(m, live)
             elif choice == "3":
-                print("已加入", m.add(ask("代號（例 2330、AAPL、BTC、加權）: ")))
+                code = ask("代號（例 2330、AAPL、BTC、加權）: ")
+                print("已加入", live.add(code) if cloud else m.add(code))
             elif choice == "4":
-                m.remove(ask("要刪除的代號: "))
+                code = ask("要刪除的代號: ")
+                live.remove(code) if cloud else m.remove(code)
                 print("已刪除")
             elif choice == "5":
                 name = ask("代號: ")
                 lo = ask("下限（空白 = 不設）: ", float, allow_empty=True)
                 hi = ask("上限（空白 = 不設）: ", float, allow_empty=True)
+                if cloud:
+                    key = Monitor.normalize(name)
+                    if key not in m.watchlist:
+                        raise ValueError(f"{key} 不在自選股裡")
+                    if lo is not None and hi is not None and lo >= hi:
+                        raise ValueError("價格下限要小於上限")
+                    wl = {c: dict(e) for c, e in m.watchlist.items()}
+                    wl[key].update(lower=lo, upper=hi)
+                    live._push_watchlist(wl, f"設定 {key} 上下限")
                 m.set_limits(name, lo, hi)
                 print("已設定")
+            elif cloud and choice in ("7", "8"):
+                name = Monitor.normalize(ask("代號: "))
+                side = "buy" if choice == "7" else "sell"
+                if side == "buy":
+                    shares = ask("股數（1 張 = 1000 股）: ", int)
+                else:
+                    held = m.account.positions.get(name, {}).get("shares", 0)
+                    shares = ask(f"股數（空白 = 全部 {held:,} 股）: ", int, default=held)
+                live.order(name, side, shares)
+                print("雲端會在 1～3 分鐘後用當時的價格成交（休市就等開盤），不能自己指定價格")
             elif choice == "6":
                 show_account(m)
             elif choice == "7":
@@ -282,13 +361,15 @@ def main(argv=None):
             elif choice == "10":
                 show_alerts(m)
             elif choice == "11":
-                edit_settings(m)
+                edit_settings(m, live)
             elif choice == "12":
-                edit_strategies(m)
+                edit_strategies(m, live)
             elif choice == "0":
                 m.save()
                 print("已存檔，再見！")
                 return
+            if choice in ("3", "4", "5", "7", "8"):
+                print_cloud_log(live, seen)
         except (TradeError, KeyError, ValueError) as e:
             print("⚠", e.args[0] if e.args else e)
         except (KeyboardInterrupt, EOFError):

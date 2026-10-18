@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sys
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -157,7 +158,11 @@ def fetch_history(sym: Symbol, period: str = "2y", start=None, end=None,
     import yfinance as yf  # 延遲匯入，示範模式不需要
 
     last_err = None
-    for code in sym.candidates:
+    # 只有一個代號（美股、加密貨幣…）時，Yahoo 偶爾會回空白資料，隔一下再試一次
+    tries = list(sym.candidates) if len(sym.candidates) > 1 else list(sym.candidates) * 2
+    for i, code in enumerate(tries):
+        if i and code == tries[i - 1]:
+            time.sleep(1.5)
         try:
             kw = dict(progress=False, auto_adjust=False)
             if start or end:

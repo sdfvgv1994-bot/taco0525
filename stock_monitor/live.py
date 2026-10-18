@@ -160,13 +160,7 @@ class LiveMonitor:
             self.busy = True
             self.version += 1
         try:
-            if self.cloud.enabled:
-                try:
-                    data, err = self.cloud.fetch(), None   # 連網的部分不鎖住
-                except CloudError as e:
-                    data, err = None, str(e)
-                with self.lock:
-                    self._cloud_sync(data, err)
+            self.cloud_pull()
             with self.lock:
                 if not self.m.watchlist:
                     return
@@ -186,6 +180,17 @@ class LiveMonitor:
                 self.version += 1
 
     # ====================== 雲端帳戶 ======================
+    def cloud_pull(self):
+        """讀雲端看盤的最新帳戶、自選股、設定（沒開雲端帳戶就什麼都不做）。"""
+        if not self.cloud.enabled:
+            return
+        try:
+            data, err = self.cloud.fetch(), None   # 連網的部分不鎖住
+        except CloudError as e:
+            data, err = None, str(e)
+        with self.lock:
+            self._cloud_sync(data, err)
+
     def _cloud_sync(self, data: dict | None, err: str | None):
         """把雲端看盤的帳戶、自選股、策略設定搬進本機的引擎（本機只看報價、提醒，不自動交易）。"""
         if err:

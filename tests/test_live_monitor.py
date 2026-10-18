@@ -401,3 +401,29 @@ def test_cloud_mode_needs_token_and_can_switch_back(tmp_path):
         assert live.m.account.cash == 123456
         with pytest.raises(ValueError):
             live.set_cloud(token="abc")
+
+
+def test_text_version_uses_cloud_account(tmp_path, monkeypatch, capsys):
+    """文字版：帳戶、自選股讀雲端；下單、加自選股、改策略寫回雲端。"""
+    from stock_monitor import cloud_link, monitor as ui
+    gh = FakeGitHub(cloud_data())
+    orig = cloud_link.CloudLink.__init__
+    monkeypatch.setattr(cloud_link.CloudLink, "__init__",
+                        lambda self, store, enabled=None, session=None: orig(self, store, enabled, gh))
+    Store(tmp_path).save("cloud.json", {"token": "github_pat_" + "x" * 30})
+    answers = iter(["6",                    # 帳戶總覽
+                    "3", "2603",            # 加自選股
+                    "7", "2330", "1000",    # 買進
+                    "8", "2330", "",        # 賣出全部
+                    "12", "3,1",            # 策略：RSI + 均線
+                    "0"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    ui.main(["--data", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "使用雲端帳戶" in out and "☁ 雲端帳戶" in out and "900,000" in out
+    assert "☁ 已送出雲端訂單" in out and "已加入 2603" in out
+    orders = json.loads(gh.files["cloud_monitor/orders.json"])
+    assert [(o["side"], o["code"], o["shares"]) for o in orders] == [("buy", "2330", 1000), ("sell", "2330", 40)]
+    import tomllib
+    cfg = tomllib.loads(gh.files["cloud_monitor/config.toml"])
+    assert "2603" in cfg["watchlist"] and cfg["settings"]["strategies"][1] == "ma"
