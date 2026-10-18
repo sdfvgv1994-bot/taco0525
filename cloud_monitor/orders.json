@@ -12,5 +12,12 @@
   "code": "AAPL",
   "side": "buy",
   "shares": 500
+ },
+ {
+  "id": "mve1fhnb-s0zk",
+  "time": "2026-10-19T00:26:31",
+  "code": "2317",
+  "side": "buy",
+  "shares": 1000
  }
 ]
