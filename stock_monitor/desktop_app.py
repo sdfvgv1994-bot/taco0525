@@ -22,6 +22,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
@@ -117,6 +118,7 @@ class DesktopApp:
         ttk.Button(bar, text="重設帳戶", command=self.reset_account).pack(side="left")
         self.notify_btn = ttk.Button(bar, command=lambda: NotifyDialog(self))
         self.notify_btn.pack(side="left", padx=(12, 0))
+        ttk.Button(bar, text="雲端帳戶…", command=lambda: CloudDialog(self)).pack(side="left", padx=(4, 0))
         self.account_label = tk.Label(bar, font=("Microsoft JhengHei", 10, "bold"))
         self.account_label.pack(side="right")
 
@@ -250,7 +252,7 @@ class DesktopApp:
             with E.lock:
                 E.log("請先在表格選一檔股票", "alert")
             return
-        if not self.apply_settings():   # 先套用「每筆投入」
+        if not E.cloud.enabled and not self.apply_settings():   # 先套用「每筆投入」（雲端帳戶的金額以雲端為準）
             return
         st = self.stock(ticker)
         price = (st["row"] or {}).get("price") if st else None
@@ -297,6 +299,10 @@ class DesktopApp:
         tk.Label(win, font=FONT, text="共 %d 筆，已實現損益 %s 元" % (len(trades), f"{realized:+,.0f}")).pack(pady=(0, 8))
 
     def reset_account(self):
+        if self.engine.cloud.enabled:
+            messagebox.showinfo("重設模擬帳戶", "現在用的是雲端帳戶，電腦版不能重設。\n"
+                                "要重設請改 GitHub 的 monitor-data 分支，或先在「雲端帳戶…」改回本機帳戶。", parent=self.root)
+            return
         if messagebox.askyesno("重設模擬帳戶", "清空所有模擬持股與交易紀錄，現金回到 %s 元？" % f"{INITIAL_CASH:,}",
                                parent=self.root):
             self.call(self.engine.reset_account)
@@ -337,9 +343,22 @@ class DesktopApp:
             self.tree.selection_set(selected)
         a = state["account"]
         ret = a["return"]
+        cloud = state.get("cloud") or {}
+        if cloud.get("enabled"):   # 工具列的數字跟著雲端設定（游標在格子裡就先不動）
+            try:
+                typing = isinstance(self.root.focus_get(), (ttk.Spinbox, ttk.Entry, tk.Entry))
+            except (KeyError, tk.TclError):   # 焦點在下拉選單裡時 tkinter 會出錯
+                typing = True
+            s = state["settings"]
+            pairs = [(self.auto_trade_var, "auto_trade")] + ([] if typing else [
+                (self.short_var, "short"), (self.long_var, "long"), (self.budget_var, "budget")])
+            for var, key in pairs:
+                if key in s:
+                    var.set(s[key])
+        prefix = ("☁ 雲端帳戶（連不上）　" if cloud.get("error") else "☁ 雲端帳戶　") if cloud.get("enabled") else ""
         self.account_label.config(
             fg="#d6336c" if ret > 0 else "#2b8a3e" if ret < 0 else "#333",
-            text="現金 %s　股票市值 %s　總資產 %s（%+.2f%%）" % (
+            text=prefix + "現金 %s　股票市值 %s　總資產 %s（%+.2f%%）" % (
                 f"{a['cash']:,.0f}", f"{a['market_value']:,.0f}", f"{a['equity']:,.0f}", ret * 100))
 
 
@@ -466,6 +485,63 @@ NOTIFY_FIELDS = {
     "discord": [("webhook", "Webhook 網址", True)],
     "line": [("token", "Channel access token", True), ("user_id", "User ID（U 開頭）", False)],
 }
+
+
+class CloudDialog:
+    """雲端帳戶：和雲端看盤共用同一個模擬帳戶。GitHub 權杖只存在本機的 data/cloud.json。"""
+
+    def __init__(self, app):
+        self.app = app
+        with app.engine.lock:
+            info = app.engine.state()["cloud"]
+        win = self.win = tk.Toplevel(app.root)
+        win.title("雲端帳戶")
+        win.transient(app.root)
+        win.resizable(False, False)
+        tk.Label(win, font=("Microsoft JhengHei", 9), justify="left", fg="#555", bg="#f8f9fa", padx=10, pady=8,
+                 wraplength=520, text=(
+                     "開啟後，電腦版的模擬帳戶、持股、自選股、上下限、策略都以「雲端看盤」為準（只有一個帳戶）。\n"
+                     "電腦版每分鐘看報價、提醒、畫圖；下單和改設定會用 GitHub 權杖寫到雲端，"
+                     "雲端約 1～3 分鐘後處理（非開盤時間的單會等開盤）。自動交易由雲端每 15 分鐘做一次。\n"
+                     "權杖：GitHub → Settings → Developer settings → Fine-grained tokens，"
+                     "只選 taco0525、Contents 選 Read and write。")).pack(fill="x", padx=12, pady=(12, 6))
+        self.enabled = tk.BooleanVar(value=info["enabled"])
+        ttk.Checkbutton(win, text="使用雲端帳戶", variable=self.enabled).pack(anchor="w", padx=14)
+        row = tk.Frame(win)
+        row.pack(fill="x", padx=14, pady=6)
+        tk.Label(row, text="GitHub 權杖", font=FONT).pack(side="left")
+        self.token = tk.StringVar()
+        ttk.Entry(row, textvariable=self.token, width=46, show="*").pack(side="left", padx=6)
+        status = "已設定（留空＝不變）" if info["has_token"] else "還沒設定（設定前只能看，不能下單或改自選股）"
+        if info.get("error"):
+            status += "\n⚠ " + info["error"]
+        elif info.get("updated"):
+            status += "\n雲端帳戶更新於 " + info["updated"]
+        tk.Label(win, text=status, font=FONT, fg="#555", justify="left").pack(anchor="w", padx=14)
+        self.msg = tk.Label(win, font=FONT, fg="#c92a2a", wraplength=520)
+        self.msg.pack()
+        btns = tk.Frame(win)
+        btns.pack(pady=10)
+        ttk.Button(btns, text="儲存", command=self.save).pack(side="left", padx=4)
+        if info["has_token"]:
+            ttk.Button(btns, text="清除權杖", command=lambda: self.save(clear=True)).pack(side="left", padx=4)
+        ttk.Button(btns, text="打開雲端看盤", command=lambda: webbrowser.open(info["page_url"])).pack(side="left", padx=4)
+        ttk.Button(btns, text="取消", command=win.destroy).pack(side="left", padx=4)
+        win.grab_set()
+
+    def save(self, clear=False):
+        E = self.app.engine
+        on = self.enabled.get()
+        if not on and E.cloud.enabled and not messagebox.askyesno(
+                "雲端帳戶", "改回電腦版自己的模擬帳戶？（雲端帳戶不受影響，之後可以再切回來）", parent=self.win):
+            return
+        try:
+            with E.lock:
+                E.set_cloud(token=self.token.get().strip() or None, enabled=on, clear=clear)
+        except ValueError as exc:
+            self.msg.config(text=str(exc))
+            return
+        self.win.destroy()
 
 
 class NotifyDialog:
@@ -595,7 +671,8 @@ def main(argv=None):
     ap.add_argument("--no-update", action="store_true", help="不要檢查 GitHub 新版")
     args = ap.parse_args(argv)
     moved = auto_import(args.data)
-    engine = LiveMonitor(args.data, source="桌面版", demo=args.demo, data_source=args.source)
+    engine = LiveMonitor(args.data, source="桌面版", demo=args.demo, data_source=args.source,
+                         cloud=False if args.demo else None)
     with engine.lock:
         for line in moved:
             engine.log(line, "trade")

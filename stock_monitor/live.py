@@ -5,6 +5,8 @@
         背景定時更新（抓資料時不鎖住，畫面不會卡）
         提醒紀錄、LINE / Telegram / Discord 通知（notify.py）、每日財經新聞（news.py）
         state()：把目前狀態整理成畫面要的 JSON（桌面版和手機版用同一份）
+        雲端帳戶模式（cloud_link.py，預設開啟）：帳戶、持股、自選股、策略設定都以雲端看盤為準，
+            這裡只負責每分鐘看報價、提醒、K 線；下單和改設定送到雲端（GitHub），不在本機自動交易
 
 多執行緒：所有操作與 state() 都要在 `with live.lock:` 裡呼叫。
 """
@@ -22,6 +24,7 @@ from common import strategies as strat
 from common.market import parse_symbol, uses_twse
 
 from . import news as NEWS
+from .cloud_link import CloudError, CloudLink
 from . import notify as N
 from .account import Account, TradeError
 from .engine import Monitor
@@ -40,7 +43,8 @@ UI_DEFAULTS = {"auto": True, "news_enabled": True, "news_time": "08:00"}
 
 class LiveMonitor:
     def __init__(self, data_dir, monitor: Monitor | None = None, source: str = "看盤",
-                 demo: bool = False, data_source: str = "auto"):
+                 demo: bool = False, data_source: str = "auto", cloud: bool | None = None,
+                 cloud_session=None):
         self.store = Store(data_dir)
         self.m = monitor or Monitor(self.store)
         for k, v in UI_DEFAULTS.items():
@@ -63,9 +67,18 @@ class LiveMonitor:
         self.live: set = set()    # 價格來自證交所即時報價的代號
         self.realtime_tried = False
         self.notes: list = []
+        # 雲端帳戶：cloud=None 依 data/cloud.json（預設開啟）；測試或不想用時傳 False
+        self.cloud = CloudLink(self.store, enabled=cloud, session=cloud_session)
+        self.cloud_data: dict | None = None
+        self.cloud_error: str | None = None
+        self.cloud_auto = False                  # 雲端的自動交易開關（本機一律不自動交易）
+        self._cloud_trades: set | None = None    # 已經看過的雲端成交（新成交才記錄、推播）
+        self._cloud_orders: dict = {}            # 訂單 id → 上次看到的狀態
+        self._backup_local_account()
         for h in self.m.alert_state.get("history", [])[-20:]:   # 接續上次的提醒紀錄
             self._push(h["time"][5:], f"{KIND_ICON.get(h['kind'], '•')} {h['message']}", "alert")
-        self.log(f"{source}啟動，{len(self.m.watchlist)} 檔自選股")
+        self.log(f"{source}啟動，{len(self.m.watchlist)} 檔自選股"
+                 + ("；使用雲端帳戶（帳戶、自選股、策略以雲端看盤為準）" if self.cloud.enabled else ""))
         if notify_problem:
             self.log(notify_problem, "alert")
 
@@ -142,24 +155,138 @@ class LiveMonitor:
 
     def refresh(self):
         with self.lock:
-            if self.busy or not self.m.watchlist:
+            if self.busy:
                 return
             self.busy = True
             self.version += 1
-            names, settings = list(self.m.watchlist), dict(self.m.settings)
-        fetched = None
         try:
-            fetched = self.m.fetch_all(names=names, settings=settings)   # 連網的部分不鎖住
-        except Exception as exc:  # noqa: BLE001
+            if self.cloud.enabled:
+                try:
+                    data, err = self.cloud.fetch(), None   # 連網的部分不鎖住
+                except CloudError as e:
+                    data, err = None, str(e)
+                with self.lock:
+                    self._cloud_sync(data, err)
             with self.lock:
-                self.log(f"更新失敗：{exc}", "alert")
-        with self.lock:
+                if not self.m.watchlist:
+                    return
+                names, settings = list(self.m.watchlist), dict(self.m.settings)
+            fetched = None
             try:
-                if fetched is not None:
+                fetched = self.m.fetch_all(names=names, settings=settings)
+            except Exception as exc:  # noqa: BLE001
+                with self.lock:
+                    self.log(f"更新失敗：{exc}", "alert")
+            if fetched is not None:
+                with self.lock:
                     self._apply(fetched)
-            finally:
+        finally:
+            with self.lock:
                 self.busy = False
                 self.version += 1
+
+    # ====================== 雲端帳戶 ======================
+    def _cloud_sync(self, data: dict | None, err: str | None):
+        """把雲端看盤的帳戶、自選股、策略設定搬進本機的引擎（本機只看報價、提醒，不自動交易）。"""
+        if err:
+            if err != self.cloud_error:
+                self.log(f"☁ {err}（先用上一次的雲端資料）", "alert")
+            self.cloud_error = err
+            return
+        if self.cloud_error:
+            self.log("☁ 雲端帳戶恢復連線")
+        self.cloud_error = None
+        self.cloud_data = data
+        m, s = self.m, data.get("settings", {})
+        # 策略設定以雲端為準
+        keys = [x["key"] if isinstance(x, dict) else x for x in s.get("strategies", [])]
+        upd = {k: s[k] for k in ("short_ma", "long_ma", "stop_loss_pct", "trail_stop_pct", "auto_buy_amount") if k in s}
+        if keys:
+            upd["strategies"] = keys
+        if "strategy_params" in s:
+            upd["strategy_params"] = s["strategy_params"]
+        m.settings.update(upd)
+        self.cloud_auto = bool(s.get("auto_trade"))
+        m.settings["auto_trade"] = False
+        # 自選股以雲端為準（本機自己加的停損 %、手動成本、趨勢線保留）
+        new = {}
+        for w in data.get("watch", []):
+            code = w["code"]
+            entry = dict(m.watchlist.get(code, {}))
+            lim = w.get("limits") or {}
+            entry["lower"], entry["upper"] = lim.get("lower"), lim.get("upper")
+            if lim.get("support"):
+                entry["support"] = list(lim["support"])
+            else:
+                entry.pop("support", None)
+            new[code] = entry
+            if w.get("name"):
+                m.names[code] = w["name"]
+        if new:
+            for code in set(m.watchlist) - set(new):
+                self.snaps.pop(code, None)
+            m.watchlist.clear()
+            m.watchlist.update(new)
+        # 帳戶以雲端為準（唯讀的鏡像，本機不會改它）
+        a = data["account"]
+        trades = list(reversed(data.get("trades", [])))
+        positions = {p["code"]: {"shares": p["shares"], "avg_cost": p["avg_cost"],
+                                 "tw": parse_symbol(p["code"]).is_tw_stock,
+                                 **({"peak": p["peak"]} if p.get("peak") else {})}
+                     for p in data.get("positions", [])}
+        m.account = Account(a.get("cash", 0), positions, trades, a.get("initial", 1_000_000))
+        for p in data.get("positions", []):
+            if p.get("price") and p["code"] not in m.last_prices:
+                m.last_prices[p["code"]] = p["price"]
+        # 新的雲端成交、訂單結果
+        keyof = lambda t: (t.get("time"), t.get("code"), t.get("side"), t.get("shares"))  # noqa: E731
+        seen = {keyof(t) for t in trades}
+        if self._cloud_trades is not None:
+            for t in trades:
+                if keyof(t) not in self._cloud_trades:
+                    self.log("☁ " + self.trade_text(t), "trade", notify="trades")
+        self._cloud_trades = seen
+        for o in data.get("orders", []):
+            before = self._cloud_orders.get(o["id"])
+            if before is not None and before != o["status"] and o["status"] in ("rejected", "expired"):
+                self.log(f"☁ 雲端訂單 {o['code']} {'買進' if o['side'] == 'buy' else '賣出'}"
+                         f"{'被拒絕' if o['status'] == 'rejected' else '已取消'}：{o.get('message', '')}", "alert")
+            self._cloud_orders[o["id"]] = o["status"]
+        self.version += 1
+        self.flush_notify()
+
+    def _cloud_rows(self, watchlist: dict | None = None) -> list:
+        wl = self.m.watchlist if watchlist is None else watchlist
+        return [(c, {"lower": e.get("lower"), "upper": e.get("upper"), "support": e.get("support") or []})
+                for c, e in wl.items()]
+
+    def _push_watchlist(self, watchlist: dict, message: str):
+        rows = self._cloud_rows(watchlist)
+        from .cloud_link import set_watchlist
+        self.cloud.edit_config(lambda text: set_watchlist(text, rows), message)
+        self.log(f"☁ 已送到雲端：{message}（約 1～3 分鐘後雲端套用）", "trade")
+
+    def _backup_local_account(self):
+        """改用雲端帳戶時，本機原本的模擬帳戶另外存一份（account_local.json），改回本機帳戶時拿回來。"""
+        if self.cloud.enabled and not (Path(self.store.dir) / "account_local.json").exists():
+            self.store.save("account_local.json", self.m.account.to_dict())
+
+    def set_cloud(self, token: str | None = None, enabled: bool | None = None, clear: bool = False):
+        """設定 GitHub 權杖、開關雲端帳戶模式（只能在電腦本機改）。"""
+        self.cloud.configure(token=token, enabled=enabled, clear=clear)
+        self._backup_local_account()
+        if enabled is False:
+            self.m.account = Account.from_dict(self.store.load("account_local.json", None)
+                                               or self.store.load("account.json", None))
+            self.m.save()
+            self.cloud_data = None
+            self.log("已改回本機帳戶（電腦版自己模擬交易）", "trade")
+        elif enabled:
+            self.log("已改用雲端帳戶", "trade")
+        elif token:
+            self.log("已記住 GitHub 權杖（存在這台電腦的 data/cloud.json）", "trade")
+        self.version += 1
+        self.wake.set()
 
     def _apply(self, fetched: dict):
         res = self.m.apply(fetched)
@@ -215,6 +342,9 @@ class LiveMonitor:
             raise ValueError("請輸入代號")
         if key in self.m.watchlist:
             raise ValueError(f"{key} 已經在清單裡")
+        if self.cloud.enabled:
+            parse_symbol(key)   # 代號格式不對會丟 ValueError
+            self._push_watchlist({**self.m.watchlist, key: {"lower": None, "upper": None}}, f"加入自選股 {key}")
         self.m.add(key)   # 代號格式不對會丟 ValueError
         self.version += 1
         self.wake.set()
@@ -222,6 +352,10 @@ class LiveMonitor:
 
     def remove(self, ticker: str):
         key = self._key(ticker)
+        if self.cloud.enabled:
+            if self.m.account.holds(key):
+                raise ValueError(f"{key} 還有持股，請先賣出再刪除")
+            self._push_watchlist({c: e for c, e in self.m.watchlist.items() if c != key}, f"刪除自選股 {key}")
         try:
             self.m.remove(key)
         except TradeError as e:
@@ -247,6 +381,10 @@ class LiveMonitor:
         if clean["lower"] is not None and clean["upper"] is not None and clean["lower"] >= clean["upper"]:
             raise ValueError("價格下限要小於上限")
         entry = self.m.watchlist[key]
+        if self.cloud.enabled and (clean["lower"], clean["upper"]) != (entry.get("lower"), entry.get("upper")):
+            wl = {c: dict(e) for c, e in self.m.watchlist.items()}
+            wl[key].update(lower=clean["lower"], upper=clean["upper"])
+            self._push_watchlist(wl, f"設定 {key} 上下限")
         if self.m.account.holds(key):   # 有模擬持股時成本跟著持股走，畫面上的成本欄位不用存
             clean["cost"] = entry.get("cost")
         if clean["cost"] != entry.get("cost"):
@@ -270,6 +408,8 @@ class LiveMonitor:
         except (TypeError, ValueError):
             raise ValueError("股數要是整數") from None
         key = Monitor.normalize(str(ticker or ""))
+        if self.cloud.enabled:
+            return self._cloud_order(key, side, shares)
         if not self.m.last_prices.get(key):
             raise ValueError(f"{key} 還沒有報價，無法模擬下單")
         try:
@@ -284,6 +424,25 @@ class LiveMonitor:
         self.version += 1
         self.flush_notify()
         return rec
+
+    def _cloud_order(self, key: str, side: str, shares: int | None) -> dict:
+        if key not in self.m.watchlist:
+            raise ValueError(f"{key} 不在自選股裡")
+        if shares is not None and shares <= 0:
+            raise ValueError("股數要大於 0")
+        if side == "sell":
+            held = self.m.account.positions.get(key, {}).get("shares", 0)
+            if not held:
+                raise ValueError(f"{key} 目前沒有持股")
+            if shares is not None and shares > held:
+                raise ValueError(f"持股只有 {held:,} 股")
+        finished = [o["id"] for o in (self.cloud_data or {}).get("orders", []) if o.get("status") != "pending"]
+        order = self.cloud.add_order(key, side, shares, finished)
+        self._cloud_orders[order["id"]] = "sent"
+        what = f"{'買進' if side == 'buy' else '賣出'} {self._label(key)} {'全部' if shares is None else f'{shares:,} 股'}"
+        self.log(f"☁ 已送出雲端訂單：{what}，雲端約 1～3 分鐘後用當時價格成交（休市就等開盤）", "trade")
+        self.version += 1
+        return order
 
     def update_settings(self, values: dict):
         s = dict(self.m.settings)
@@ -319,7 +478,19 @@ class LiveMonitor:
             if not keys:
                 raise ValueError("至少要選一個策略")
             s["strategies"] = list(dict.fromkeys(keys))
-        if s["auto_trade"] != self.m.settings["auto_trade"]:
+        if self.cloud.enabled:   # 策略、均線、停損、每筆金額、自動交易：改雲端的 config.toml
+            cur = {**self.m.settings, "auto_trade": self.cloud_auto}
+            names = {"short_ma": "短均線", "long_ma": "長均線", "auto_buy_amount": "每筆金額", "stop_loss_pct": "停損",
+                     "trail_stop_pct": "移動停損", "strategies": "策略", "auto_trade": "自動交易"}
+            changed = {k: s[k] for k in names if s.get(k) != cur.get(k)}
+            if changed:
+                from .cloud_link import set_settings
+                self.cloud.edit_config(lambda text: set_settings(text, changed),
+                                       "電腦版修改雲端設定：" + "、".join(names[k] for k in changed))
+                self.log("☁ 已送到雲端：修改" + "、".join(names[k] for k in changed) + "（約 1～3 分鐘後雲端套用）", "trade")
+                self.cloud_auto = s["auto_trade"]
+            s["auto_trade"] = False
+        elif s["auto_trade"] != self.m.settings["auto_trade"]:
             self.log("自動模擬交易已%s" % (f"開啟：主策略「{strat.get(s['strategies'][0]).name}」買進訊號買進 "
                                            f"{s['auto_buy_amount']:,.0f} 元，賣出訊號 / 停損 / 移動停損賣出"
                                            if s["auto_trade"] else "關閉"), "trade")
@@ -353,12 +524,18 @@ class LiveMonitor:
             raise ValueError("水平線價格要是數字") from None
         if any(p <= 0 for p in clean):
             raise ValueError("價格要大於 0")
+        if self.cloud.enabled and clean != (self.m.watchlist[key].get("support") or []):
+            wl = {c: dict(e) for c, e in self.m.watchlist.items()}
+            wl[key]["support"] = clean
+            self._push_watchlist(wl, f"設定 {key} 支撐線")
         self.m.watchlist[key]["support"] = clean
         self.m.alert_state["fired"] = [k for k in self.m.alert_state.get("fired", [])
                                        if not k.startswith(f"{key}|support|")]
         self._changed()
 
     def reset_account(self):
+        if self.cloud.enabled:
+            raise ValueError("雲端帳戶要到 GitHub 刪除 monitor-data 分支才能重設（見 cloud_monitor/README.md「想重來」）")
         self.m.account = Account()
         for entry in self.m.watchlist.values():
             if not entry.get("cost"):
@@ -450,7 +627,8 @@ class LiveMonitor:
         return {
             "updated": self.updated, "busy": self.busy,
             "settings": {"short": s["short_ma"], "long": s["long_ma"], "interval": s["interval"],
-                         "auto": s.get("auto", True), "auto_trade": s["auto_trade"],
+                         "auto": s.get("auto", True),
+                         "auto_trade": self.cloud_auto if self.cloud.enabled else s["auto_trade"],
                          "budget": s["auto_buy_amount"], "stop_loss_pct": s["stop_loss_pct"],
                          "trail_stop_pct": s.get("trail_stop_pct", 0),
                          "news_enabled": s.get("news_enabled", True), "news_time": s.get("news_time", "08:00"),
@@ -467,6 +645,9 @@ class LiveMonitor:
                         "pnl": t.get("pnl"), "reason": t["reason"]} for t in reversed(a.trades[-50:])],
             "logs": list(self.logs)[:60],
             "notes": list(self.notes),
+            "cloud": {**self.cloud.public(), "error": self.cloud_error,
+                      "updated": (self.cloud_data or {}).get("updated"),
+                      "orders": [dict(o) for o in (self.cloud_data or {}).get("orders", [])][:20]},
         }
 
     def _max_buy(self, price) -> int:

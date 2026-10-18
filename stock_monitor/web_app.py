@@ -235,6 +235,17 @@ def make_handler(engine, key):
                 return self.send_json({"error": "格式錯誤"}, 400)
             if path.startswith("/api/notify"):
                 return self.notify_action(path, body)
+            if path == "/api/cloud":   # 雲端帳戶：GitHub 權杖只能在電腦本機設定
+                if not self.is_local():
+                    return self.send_json({"error": "為了安全，GitHub 權杖只能在電腦上的瀏覽器設定"}, 403)
+                try:
+                    with engine.lock:
+                        engine.set_cloud(token=body.get("token") or None, enabled=body.get("enabled"),
+                                         clear=bool(body.get("clear")))
+                except ValueError as exc:
+                    return self.send_json({"error": str(exc)}, 400)
+                engine.wake.set()
+                return self.send_json({"ok": True})
             if path == "/api/news/send":   # 立即推送一次每日新聞（測試或補送）
                 with engine.lock:
                     ready = N.any_ready(engine.notify_cfg)
@@ -311,7 +322,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     moved = auto_import(args.data)
-    engine = LiveMonitor(args.data, source="手機版", demo=args.demo, data_source=args.source)
+    engine = LiveMonitor(args.data, source="手機版", demo=args.demo, data_source=args.source,
+                        cloud=False if args.demo else None)
     for line in moved:
         engine.log(line, "trade")
     key = load_key(engine.store)

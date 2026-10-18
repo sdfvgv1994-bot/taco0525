@@ -273,14 +273,16 @@ input[type=password] { border: 1px solid var(--line); background: var(--card); b
       <div class="note" style="margin:8px 0 0" id="newsDigestInfo"></div>
     </div>
 
+    <div class="section-title">雲端帳戶</div>
+    <div class="card" id="cloudCard"></div>
+
     <div class="section-title">通知管道</div>
     <div class="card" id="notifyCard"></div>
 
     <div class="section-title">手機連線網址</div>
     <div class="card" id="urlCard"></div>
-    <div class="section-title">危險區</div>
-    <div class="card"><button class="btn danger" id="resetBtn" style="width:100%">重設模擬帳戶（回到 100 萬）</button></div>
-    <p class="note">電腦關機也想看：<a href="https://sdfvgv1994-bot.github.io/taco0525/monitor/" target="_blank" rel="noopener">雲端看盤</a>（GitHub 每 15 分鐘跑一次，另一份模擬帳戶）。</p>
+    <div class="section-title" id="dangerTitle">危險區</div>
+    <div class="card" id="dangerCard"><button class="btn danger" id="resetBtn" style="width:100%">重設模擬帳戶（回到 100 萬）</button></div>
     <p class="note">※ 模擬下單不會真的下單。台股報價來自證交所 / 櫃買中心（抓不到改 Yahoo），其他市場來自 Yahoo；基本面與籌碼來自 FinMind 開放資料，可能延遲或有誤。學習用途，非投資建議。</p>
   </section>
 </main>
@@ -399,7 +401,8 @@ function render() {
   $("cash").textContent = money(a.cash);
   $("mv").textContent = money(a.market_value);
   $("realized").innerHTML = `<span class="${tone(a.realized)}">${a.realized ? signed(a.realized) : "0"}</span>`;
-  $("badges").innerHTML =
+  const cl = s.cloud || {};
+  $("badges").innerHTML = (cl.enabled ? `<span class="chip ${cl.error ? "" : "on"}">☁ 雲端帳戶${cl.error ? "（連不上）" : ""}</span>` : "") +
     `<span class="chip ${s.settings.auto_trade ? "on" : ""}">自動交易 ${s.settings.auto_trade ? "開" : "關"}</span>` +
     (() => { const on = notifyOn(); return `<span class="chip ${on.length ? "on" : ""}">通知 ${on.length ? on.join("、") : "關"}</span>`; })() +
     `<span class="chip">★${esc(stratName(s.settings.strategies[0]))}${s.settings.strategies.length > 1 ? " +" + (s.settings.strategies.length - 1) : ""}</span>`;
@@ -458,8 +461,53 @@ function fillSettings() {
   $("newsDigestInfo").textContent = (notifyOn().length ? "會推播到：" + notifyOn().join("、") : "⚠ 還沒有開啟任何通知管道，請先在下面設定")
     + "。電腦要開著才會送" + (state.last_digest ? `；上次推送 ${state.last_digest}` : "") + "。";
   renderNotify();
+  renderCloud();
   renderUrls();
 }
+
+// ---------- 雲端帳戶（帳戶、持股、自選股、策略都以雲端看盤為準；權杖只能在電腦本機設定） ----------
+const cloudOn = () => !!(state && state.cloud && state.cloud.enabled);
+function renderCloud() {
+  const c = state.cloud || {}, local = state.is_local;
+  const key = JSON.stringify([c.enabled, c.has_token, c.error, c.updated, local, (c.orders || []).map(o => o.id + o.status)]);
+  if (renderCloud.key === key) return;
+  renderCloud.key = key;
+  const pending = (c.orders || []).filter(o => o.status === "pending" || !o.status);
+  let html = `<label class="row" style="justify-content:space-between"><span>使用雲端帳戶（和 <a href="${esc(c.page_url || "#")}" target="_blank" rel="noopener">雲端看盤</a> 同一個帳戶）</span>
+    <input type="checkbox" id="cloudEnabled" ${c.enabled ? "checked" : ""} ${local ? "" : "disabled"}></label>`;
+  if (c.enabled) {
+    html += `<div class="note" style="margin:8px 0 0">${c.error ? "⚠ " + esc(c.error) : "雲端帳戶更新於 " + esc(c.updated || "—")}。
+      自選股、上下限、策略、下單都會改到雲端（GitHub），雲端約 1～3 分鐘後處理；自動交易由雲端每 15 分鐘做一次，電腦只負責每分鐘看報價、提醒。</div>`;
+    if (pending.length) html += `<div class="note" style="margin:6px 0 0">等雲端成交：${pending.map(o => `${esc(o.code)} ${o.side === "buy" ? "買" : "賣"} ${o.shares ? o.shares.toLocaleString() + " 股" : "全部"}`).join("、")}</div>`;
+    html += `<div class="note" style="margin:6px 0 0">GitHub 權杖：${c.has_token ? "<b>已設定</b>" : "<b>還沒設定</b>（設定前只能看，不能下單或改自選股）"}</div>`;
+  } else {
+    html += `<div class="note" style="margin:8px 0 0">目前用電腦版自己的模擬帳戶（和雲端看盤是兩份）。</div>`;
+  }
+  if (local) {
+    html += `<div class="row" style="margin-top:8px"><input id="cloudToken" type="password" autocomplete="off" placeholder="${c.has_token ? "已設定（留空＝不變）" : "貼上 GitHub 權杖 github_pat_…"}" style="flex:1">
+      <button class="btn small" id="cloudSave">儲存</button>${c.has_token ? `<button class="btn small" id="cloudClear">清除</button>` : ""}</div>
+      <div class="note" style="margin:6px 0 0">權杖只存在這台電腦（data/cloud.json），不會傳到手機畫面。</div>`;
+  } else if (!c.has_token) {
+    html += `<div class="note" style="margin:6px 0 0">為了安全，權杖只能在<b>電腦上的瀏覽器</b>設定。</div>`;
+  }
+  $("cloudCard").innerHTML = html;
+  $("dangerTitle").hidden = $("dangerCard").hidden = !!c.enabled;
+}
+$("cloudCard").addEventListener("change", async e => {
+  if (e.target.id !== "cloudEnabled") return;
+  const on = e.target.checked;
+  if (!on && !confirm("改回電腦版自己的模擬帳戶？（雲端帳戶不受影響，之後可以再切回來）")) return renderCloud.key = null, renderCloud();
+  if (await act("/api/cloud", { enabled: on }, on ? "已改用雲端帳戶" : "已改回本機帳戶")) renderCloud.key = null;
+});
+$("cloudCard").addEventListener("click", async e => {
+  if (e.target.id === "cloudSave") {
+    const token = $("cloudToken").value.trim();
+    if (!token) return toast("請貼上權杖", true);
+    if (await act("/api/cloud", { token }, "權杖已儲存")) renderCloud.key = null;
+  } else if (e.target.id === "cloudClear" && confirm("清除 GitHub 權杖？")) {
+    if (await act("/api/cloud", { clear: true }, "已清除")) renderCloud.key = null;
+  }
+});
 
 // ---------- 通知管道（Token 只能在電腦本機的瀏覽器設定，而且不會傳回畫面） ----------
 const CHANNELS = {
@@ -1103,7 +1151,8 @@ async function order(side, st) {
   const price = st.row.price, word = side === "buy" ? "買進" : "賣出";
   if (!confirm(`模擬${word} ${st.symbol} ${shares.toLocaleString()} 股\n參考價 ${num(price)}，約 ${money(price * shares)} 元`)) return;
   document.activeElement.blur();
-  await act("/api/order", { ticker: st.ticker, side, shares }, `已模擬${word}`);
+  await act("/api/order", { ticker: st.ticker, side, shares },
+    cloudOn() ? `已送到雲端，約 1～3 分鐘後成交（非開盤時間會等開盤）` : `已模擬${word}`);
 }
 
 // ====================== 事件 ======================
@@ -1167,7 +1216,7 @@ $("saveStrategies").onclick = async () => {
 };
 
 $("autoTrade").onchange = e => act("/api/settings", { auto_trade: e.target.checked },
-  e.target.checked ? "自動模擬交易已開啟" : "自動模擬交易已關閉");
+  (e.target.checked ? "自動模擬交易已開啟" : "自動模擬交易已關閉") + (cloudOn() ? "（雲端）" : ""));
 $("resetBtn").onclick = () => {
   if (confirm("清空所有模擬持股與交易紀錄，現金回到 100 萬？")) act("/api/reset", {}, "帳戶已重設");
 };

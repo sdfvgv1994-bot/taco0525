@@ -662,7 +662,7 @@ def page_data(m, res, now, updated_utc, total, equity, config_errors, held_only,
     for code, p in a.positions.items():
         px = prices.get(code, p["avg_cost"])
         positions.append({"code": code, "name": m.names.get(code, ""), "shares": p["shares"],
-                          "avg_cost": round(p["avg_cost"], 4), "price": px,
+                          "avg_cost": round(p["avg_cost"], 4), "price": px, "peak": p.get("peak"),
                           "pnl": round((px - p["avg_cost"]) * p["shares"], 2),
                           "pnl_pct": round((px / p["avg_cost"] - 1) * 100, 2),
                           # 這次抓不到報價時，價格是哪個時間抓到的
@@ -694,7 +694,7 @@ def page_data(m, res, now, updated_utc, total, equity, config_errors, held_only,
         "settings": {"strategies": [{"key": k, "name": strat.get(k).name} for k in s["strategies"]],
                      "auto_trade": s["auto_trade"], "auto_buy_amount": s["auto_buy_amount"],
                      "stop_loss_pct": s["stop_loss_pct"], "trail_stop_pct": s.get("trail_stop_pct", 0),
-                     "short_ma": s["short_ma"],
+                     "short_ma": s["short_ma"], "strategy_params": s.get("strategy_params", {}),
                      "long_ma": s["long_ma"]},
         "account": {"initial": a.initial, "cash": round(a.cash, 2),
                     "market_value": round(a.market_value(prices), 2), "total": round(total, 2),

@@ -41,7 +41,7 @@ def make_live(tmp_path, **settings):
     feed = FakeFeed()
     m = Monitor(Store(tmp_path), fetcher=feed, realtime=lambda items: {}, name_lookup=lambda c: None)
     m.settings.update(short_ma=2, long_ma=5, stop_loss_pct=0, **settings)
-    live = LiveMonitor(tmp_path, monitor=m, source="測試")
+    live = LiveMonitor(tmp_path, monitor=m, source="測試", cloud=False)
     live.m.settings["source"] = "yahoo"   # 測試不查證交所即時報價
     return live, feed
 
@@ -249,3 +249,155 @@ def test_web_api(tmp_path):
         assert e.value.code == 403
     finally:
         srv.shutdown()
+
+
+# ---------- 雲端帳戶模式（電腦版用雲端看盤的帳戶） ----------
+import base64  # noqa: E402
+
+from stock_monitor.cloud_link import set_settings, set_watchlist  # noqa: E402
+
+CLOUD_CONFIG = '''# 說明
+watchlist = ["2330", "AAPL"]
+
+[settings]
+# 策略
+  strategies = ["smc", "ma"]
+auto_trade = true          # 自動模擬交易
+auto_buy_amount = 100000   # 每次買進
+stop_loss_pct = 8
+short_ma = 5
+long_ma = 20
+
+# 上下限
+[limits]
+"2330" = { lower = 1800, upper = 3000 }
+# "AAPL" = { upper = 400 }
+
+[strategy_params]
+'''
+
+
+def test_config_editing_keeps_comments():
+    t = set_watchlist(CLOUD_CONFIG, [("2330", {"lower": 1800, "upper": 3000, "support": [2500]}),
+                                     ("2603", {"lower": None, "upper": 250})])
+    assert 'watchlist = ["2330", "2603"]' in t and '"2330" = { lower = 1800, upper = 3000, support = [2500] }' in t
+    assert '"2603" = { upper = 250 }' in t and '# "AAPL" = { upper = 400 }' in t and "# 說明" in t
+    t = set_settings(t, {"strategies": ["ma", "orderflow"], "auto_trade": False, "trail_stop_pct": 12})
+    assert '  strategies = ["ma", "orderflow"]' in t
+    assert "auto_trade = false          # 自動模擬交易" in t and "trail_stop_pct = 12" in t
+    import tomllib
+    cfg = tomllib.loads(t)
+    assert cfg["settings"]["strategies"] == ["ma", "orderflow"] and cfg["limits"]["2603"] == {"upper": 250}
+
+
+class FakeGitHub:
+    """假的雲端網頁（data.json）＋ GitHub API。"""
+    def __init__(self, data):
+        self.data, self.files, self.puts = data, {"cloud_monitor/config.toml": CLOUD_CONFIG}, []
+
+    class R:
+        def __init__(self, code, body):
+            self.status_code, self._body = code, body
+
+        def json(self):
+            return self._body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(self.status_code)
+
+    def _path(self, url):
+        return url.split("/contents/")[1]
+
+    def get(self, url, **kw):
+        if url.startswith("https://sdfvgv1994-bot.github.io"):
+            return self.R(200, self.data)
+        path = self._path(url)
+        if path not in self.files:
+            return self.R(404, {"message": "Not Found"})
+        return self.R(200, {"content": base64.b64encode(self.files[path].encode()).decode(), "sha": "s"})
+
+    def put(self, url, json=None, **kw):
+        path = self._path(url)
+        self.files[path] = base64.b64decode(json["content"]).decode()
+        self.puts.append((path, json["message"]))
+        return self.R(200, {})
+
+
+def cloud_data():
+    return {"updated": "2026-10-19 10:00:00",
+            "settings": {"strategies": [{"key": "smc", "name": "SMC"}, {"key": "ma", "name": "均線"}],
+                         "auto_trade": True, "auto_buy_amount": 100000.0, "stop_loss_pct": 8.0,
+                         "trail_stop_pct": 0, "short_ma": 5, "long_ma": 20, "strategy_params": {}},
+            "account": {"initial": 1_000_000, "cash": 900_000.0},
+            "positions": [{"code": "2330", "name": "台積電", "shares": 40, "avg_cost": 2500.0, "price": 2450.0}],
+            "watch": [{"code": "2330", "name": "台積電", "limits": {"lower": 1800, "upper": 3000}},
+                      {"code": "AAPL", "name": "", "limits": {"lower": None, "upper": None}}],
+            "trades": [{"time": "2026-10-19 09:30:00", "side": "買進", "code": "2330", "price": 2500.0, "shares": 40,
+                        "fee": 142.5, "tax": 0, "cash_flow": -100142.5, "reason": "手動（雲端網頁）"}],
+            "orders": []}
+
+
+def make_cloud_live(tmp_path, token=True):
+    gh = FakeGitHub(cloud_data())
+    store = Store(tmp_path)
+    if token:
+        store.save("cloud.json", {"token": "github_pat_" + "x" * 30})
+    feed = FakeFeed()
+    feed.data = {"2330": ([2450.0] * 30, 2450.0), "AAPL": ([300.0] * 30, 300.0)}
+    m = Monitor(store, fetcher=feed, realtime=lambda items: {}, name_lookup=lambda c: None)
+    live = LiveMonitor(tmp_path, monitor=m, source="測試", cloud_session=gh)
+    live.m.settings["source"] = "yahoo"
+    return live, gh, feed
+
+
+def test_cloud_mode_mirrors_account_and_settings(tmp_path):
+    live, gh, _ = make_cloud_live(tmp_path)
+    live.refresh()
+    with live.lock:
+        st = live.state()
+    assert st["cloud"]["enabled"] and st["cloud"]["has_token"] and "token" not in st["cloud"]
+    assert st["account"]["cash"] == 900_000 and st["stocks"][0]["position"]["shares"] == 40
+    assert [s["ticker"] for s in st["stocks"]] == ["2330", "AAPL"]
+    assert st["settings"]["strategies"] == ["smc", "ma"] and st["settings"]["auto_trade"] is True
+    assert live.m.settings["auto_trade"] is False                  # 本機不自動交易
+    assert st["trades"][0]["ticker"] == "2330"
+
+
+def test_cloud_mode_writes_go_to_github(tmp_path):
+    live, gh, feed = make_cloud_live(tmp_path)
+    live.refresh()
+    with live.lock:
+        order = live.order("2330", "sell", 40)
+        assert order["side"] == "sell" and order["shares"] == 40
+        with pytest.raises(ValueError):
+            live.order("AAPL", "sell", 1)                           # 沒有持股
+        live.add("2603")
+        live.set_alerts("2603", {"above": "250"})
+        live.set_hlines("2330", [2400])
+        live.update_settings({"strategies": ["ma", "orderflow"], "auto_trade": False, "short": 10, "long": 30})
+        with pytest.raises(ValueError):
+            live.reset_account()
+    orders = json.loads(gh.files["cloud_monitor/orders.json"])
+    assert orders[0]["code"] == "2330" and orders[0]["side"] == "sell" and orders[0]["shares"] == 40
+    import tomllib
+    cfg = tomllib.loads(gh.files["cloud_monitor/config.toml"])
+    assert cfg["watchlist"] == ["2330", "AAPL", "2603"]
+    assert cfg["limits"]["2603"] == {"upper": 250} and cfg["limits"]["2330"]["support"] == [2400]
+    assert cfg["settings"]["strategies"] == ["ma", "orderflow"] and cfg["settings"]["auto_trade"] is False
+    assert (cfg["settings"]["short_ma"], cfg["settings"]["long_ma"]) == (10, 30)
+    assert "# 說明" in gh.files["cloud_monitor/config.toml"]
+
+
+def test_cloud_mode_needs_token_and_can_switch_back(tmp_path):
+    Store(tmp_path).save("account.json", {"cash": 123456, "initial": 1_000_000, "positions": {}, "trades": []})
+    live, gh, _ = make_cloud_live(tmp_path, token=False)
+    live.refresh()
+    with live.lock:
+        with pytest.raises(ValueError, match="權杖"):
+            live.order("2330", "buy", 1)
+        assert live.m.account.cash == 900_000
+        live.set_cloud(enabled=False)                               # 改回本機帳戶：原本的帳戶還在
+        assert live.m.account.cash == 123456
+        with pytest.raises(ValueError):
+            live.set_cloud(token="abc")
