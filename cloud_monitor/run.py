@@ -30,6 +30,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from cloud_monitor import notify  # noqa: E402
+from cloud_monitor.keep_last import copy_page  # noqa: E402
 from common import strategies as strat  # noqa: E402
 from common.market import parse_symbol, uses_twse  # noqa: E402
 from stock_monitor.engine import Monitor  # noqa: E402
@@ -612,7 +613,7 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     out.mkdir(parents=True, exist_ok=True)
     (out / "data.json").write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":"),
                                               allow_nan=False), encoding="utf-8")
-    shutil.copyfile(PAGE, out / "index.html")
+    copy_page(out)
     log(f"雲端看盤：{len(res.snapshots)}/{len(m.watchlist)} 檔有報價，新提醒 {len(res.alerts)} 則，"
         f"自動成交 {len(res.trades)} 筆，總資產 {total:,.0f}")
     for c, e in res.errors.items():

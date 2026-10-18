@@ -15,6 +15,14 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+
+def copy_page(out: Path) -> None:
+    """網頁本體：index.html、App 用的 sw.js（要放在網頁同一層）、圖示與 manifest（app/）。"""
+    out = Path(out)
+    shutil.copyfile(HERE / "index.html", out / "index.html")
+    shutil.copyfile(HERE / "app" / "sw.js", out / "sw.js")
+    shutil.copytree(HERE / "app", out / "app", dirs_exist_ok=True)
 LIVE_DATA = "https://sdfvgv1994-bot.github.io/taco0525/monitor/data.json"   # 目前網頁上的資料
 
 
@@ -38,7 +46,7 @@ def _get(url: str) -> dict:
 def keep_last(out_dir: Path, reason: str, get=_get, log=print) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(HERE / "index.html", out / "index.html")
+    copy_page(out)
     try:
         data = get(f"{LIVE_DATA}?t={int(time.time())}")
         if not isinstance(data, dict) or "updated" not in data:

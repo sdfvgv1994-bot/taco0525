@@ -7,6 +7,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="我的看盤">
 <title>我的雲端看盤</title>
+<link rel="manifest" href="app/manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="app/icon-192.png">
+<link rel="apple-touch-icon" href="app/apple-touch-icon.png">
+<meta name="theme-color" content="#2a78d6">
 <style>
 :root {
   color-scheme: light;
@@ -867,6 +871,8 @@ $("editor").addEventListener("toggle", () => { if ($("editor").open && ED.text =
 
 applyPrefs();
 load();
+// 加到主畫面後當 App 用：沒網路時顯示上一次看過的資料
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 setInterval(load, 60000);
 setInterval(() => { showUpdated(); if (data) $("watch").replaceChildren(...data.watch.map(watchCard)); }, 30000);
 let rt;
