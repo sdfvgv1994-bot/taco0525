@@ -1,22 +1,8 @@
 [
  {
-  "id": "mvck9r6z-vknp",
-  "time": "2026-10-17T23:38:24",
-  "code": "2882",
-  "side": "buy",
-  "shares": 5000
- },
- {
-  "id": "mvckb56o-nzw4",
-  "time": "2026-10-17T23:39:28",
-  "code": "AAPL",
-  "side": "buy",
-  "shares": 500
- },
- {
-  "id": "mve1fhnb-s0zk",
-  "time": "2026-10-19T00:26:31",
-  "code": "2317",
+  "id": "mvfbnepj-wb94",
+  "time": "2026-10-19T22:00:23",
+  "code": "2890",
   "side": "buy",
   "shares": 1000
  }
