@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "mvck9r6z-vknp",
+    "time": "2026-10-17T23:38:24",
+    "code": "2882",
+    "side": "buy",
+    "shares": 5000,
+    "status": "done",
+    "price": 113.0,
+    "fee": 805.12,
+    "tax": 0.0,
+    "message": "買進 5,000 股 @ 113.00",
+    "handled": "2026-10-19 09:32"
+  },
+  {
+    "id": "mve1fhnb-s0zk",
+    "time": "2026-10-19T00:26:31",
+    "code": "2317",
+    "side": "buy",
+    "shares": 1000,
+    "status": "done",
+    "price": 239.5,
+    "fee": 341.29,
+    "tax": 0.0,
+    "message": "買進 1,000 股 @ 239.50",
+    "handled": "2026-10-19 09:32"
+  }
+]
