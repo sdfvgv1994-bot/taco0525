@@ -24,5 +24,18 @@
     "tax": 0.0,
     "message": "買進 1,000 股 @ 239.50",
     "handled": "2026-10-19 09:32"
+  },
+  {
+    "id": "mvckb56o-nzw4",
+    "time": "2026-10-17T23:39:28",
+    "code": "AAPL",
+    "side": "buy",
+    "shares": 500,
+    "status": "done",
+    "price": 344.39,
+    "fee": 245.38,
+    "tax": 0.0,
+    "message": "買進 500 股 @ 344.39",
+    "handled": "2026-10-19 21:40"
   }
 ]
