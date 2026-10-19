@@ -5,12 +5,14 @@
     "2882": {
       "shares": 5000,
       "avg_cost": 113.161024,
-      "tw": true
+      "tw": true,
+      "peak": 113.5
     },
     "2317": {
       "shares": 1000,
       "avg_cost": 239.84129000000001,
-      "tw": true
+      "tw": true,
+      "peak": 239.84129000000001
     }
   },
   "trades": [
