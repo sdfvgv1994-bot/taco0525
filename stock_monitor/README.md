@@ -27,6 +27,7 @@
 
 ```
  desktop_app.py   web_app.py + web/   monitor.py       ← 畫面：只管按鈕、表格、網頁
+                  └ web_api.py（手機版的網址 → 看盤服務的操作）
         └──────────┬──────┘               │
                 live.py（背景更新、給畫面的資料）
                    ├─ live_notify.py   紀錄、手機通知、每日新聞

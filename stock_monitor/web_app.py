@@ -40,9 +40,7 @@ if __name__ == "__main__":  # 先自動更新，再匯入 pandas 等套件（Win
     from common.updater import check_and_update
     check_and_update()
 
-from stock_monitor import market_data as D  # noqa: E402  個股 K 線 / 基本面 / 籌碼
-from stock_monitor import news as NEWS  # noqa: E402  財經新聞
-from stock_monitor import notify as N  # noqa: E402  LINE / Telegram / Discord
+from stock_monitor import web_api as API  # noqa: E402  網址 → 看盤服務的操作（積木）
 from stock_monitor.import_old import auto_import  # noqa: E402  搬舊版存檔
 from stock_monitor.live import LiveMonitor  # noqa: E402  看盤服務（和桌面版共用）
 
@@ -174,55 +172,11 @@ def make_handler(engine, key):
                     page = f.read()
                 cookie = "key=%s; Path=/; Max-Age=31536000; SameSite=Strict; HttpOnly" % key
                 return self.send(200, page, "text/html; charset=utf-8", {"Set-Cookie": cookie})
-            if path == "/api/state":
-                with engine.lock:
-                    state = engine.state()
-                state["urls"] = access_urls(key)
-                state["is_local"] = self.is_local()
-                state["last_digest"] = engine.last_digest_date()
-                return self.send_json(state)
-            if path in ("/api/chart", "/api/fundamental", "/api/chips"):
-                return self.stock_detail(path)
-            if path == "/api/news":
-                force = parse_qs(urlparse(self.path).query).get("force", [""])[0] == "1"
-                data = NEWS.get_news(force=force)        # 網路請求不鎖引擎
-                with engine.lock:
-                    watch = engine.watch_names()
-                    last = engine.last_digest_date()
-                items = NEWS.tag_watchlist(data["items"][:400], watch)
-                return self.send_json({"items": items, "status": data["status"], "updated": data["updated"],
-                                       "names": dict(watch), "last_digest": last})
+            if path.startswith("/api/"):
+                code, obj = API.get(engine, path, parse_qs(urlparse(self.path).query),
+                                    key=key, is_local=self.is_local(), urls=access_urls)
+                return self.send_json(obj, code)
             self.send(404, "not found", "text/plain")
-
-        def stock_detail(self, path):
-            """個股 K 線 / 基本面 / 籌碼。抓資料時不鎖住引擎，其他操作照常。"""
-            query = parse_qs(urlparse(self.path).query)
-            ticker = query.get("ticker", [""])[0].strip().upper()
-            if not ticker:
-                return self.send_json({"error": "缺少 ticker"}, 400)
-            with engine.lock:
-                symbol = engine.symbol_of(ticker)
-                stock = engine.find(ticker)
-                trendlines = list(stock.get("trendlines", [])) if stock else []
-                hlines = list(stock.get("support", [])) if stock else []
-                name = engine.m.names.get(ticker, "")
-                source, demo = engine.m.settings.get("source", "auto"), engine.m.settings.get("demo", False)
-            try:
-                if path == "/api/chart":
-                    period = query.get("period", ["1y"])[0]
-                    if period not in ("3mo", "6mo", "1y", "2y", "5y"):
-                        period = "1y"
-                    data = dict(D.get_chart(symbol, period, source=source, demo=demo),
-                                trendlines=trendlines, hlines=hlines)
-                elif path == "/api/fundamental":
-                    data = D.get_fundamental(symbol)
-                else:
-                    data = D.get_chips(symbol)
-            except ValueError as exc:
-                return self.send_json({"error": str(exc)}, 400)
-            except Exception as exc:  # noqa: BLE001 - 資料源偶爾出錯，不要讓伺服器掛掉
-                return self.send_json({"error": "資料暫時抓不到（%s）" % exc.__class__.__name__}, 502)
-            self.send_json(dict(data, ticker=ticker, name=name))
 
         def do_POST(self):
             if not self.authorized():
@@ -233,80 +187,8 @@ def make_handler(engine, key):
                 body = json.loads(self.rfile.read(length) or b"{}") if length else {}
             except ValueError:
                 return self.send_json({"error": "格式錯誤"}, 400)
-            if path.startswith("/api/notify"):
-                return self.notify_action(path, body)
-            if path == "/api/cloud":   # 雲端帳戶：GitHub 權杖只能在電腦本機設定
-                if not self.is_local():
-                    return self.send_json({"error": "為了安全，GitHub 權杖只能在電腦上的瀏覽器設定"}, 403)
-                try:
-                    with engine.lock:
-                        engine.set_cloud(token=body.get("token") or None, enabled=body.get("enabled"),
-                                         clear=bool(body.get("clear")))
-                except ValueError as exc:
-                    return self.send_json({"error": str(exc)}, 400)
-                engine.wake.set()
-                return self.send_json({"ok": True})
-            if path == "/api/news/send":   # 立即推送一次每日新聞（測試或補送）
-                with engine.lock:
-                    ready = N.any_ready(engine.notify_cfg)
-                if not ready:
-                    return self.send_json({"error": "還沒有開啟任何通知管道"}, 400)
-                errors = engine.send_digest()
-                if errors:
-                    return self.send_json({"error": "%s 失敗：%s" % errors[0]}, 400)
-                return self.send_json({"ok": True})
-            actions = {
-                "/api/refresh": lambda: engine.wake.set(),
-                "/api/add": lambda: engine.add(body.get("ticker", "")),
-                "/api/remove": lambda: engine.remove(body.get("ticker")),
-                "/api/alerts": lambda: engine.set_alerts(body.get("ticker"), body),
-                "/api/order": lambda: engine.order(body.get("ticker"), body.get("side"), body.get("shares")),
-                "/api/strategies": lambda: engine.update_settings({"strategies": body.get("strategies", [])}),
-                "/api/settings": lambda: engine.update_settings(body),
-                "/api/reset": lambda: engine.reset_account(),
-                "/api/trendlines": lambda: engine.set_trendlines(body.get("ticker"), body.get("lines")),
-                "/api/hlines": lambda: engine.set_hlines(body.get("ticker"), body.get("prices")),
-            }
-            if path not in actions:
-                return self.send_json({"error": "not found"}, 404)
-            try:
-                with engine.lock:
-                    actions[path]()
-            except ValueError as exc:
-                return self.send_json({"error": str(exc)}, 400)
-            self.send_json({"ok": True})
-
-        def notify_action(self, path, body):
-            """通知設定。改設定、用 Token 查 Chat ID 只能在電腦本機做；測試傳送手機也可以按。"""
-            if path in ("/api/notify", "/api/notify/telegram_chats") and not self.is_local():
-                return self.send_json({"error": "為了安全，通知的 Token 只能在電腦上的瀏覽器設定"}, 403)
-            try:
-                if path == "/api/notify":
-                    with engine.lock:
-                        engine.update_notify(body)
-                    return self.send_json({"ok": True})
-                if path == "/api/notify/test":
-                    with engine.lock:
-                        cfg = engine.notify_test_config(body.get("channel"))
-                    name = N.CHANNELS[body["channel"]]
-                    errors = N.send_all(cfg, "✅ 自動看盤測試訊息：%s 通知設定成功！" % name)   # 網路請求不鎖引擎
-                    if errors:
-                        return self.send_json({"error": "%s 失敗：%s" % errors[0]}, 400)
-                    return self.send_json({"ok": True})
-                if path == "/api/notify/telegram_chats":
-                    token = str(body.get("token") or "").strip()
-                    if not token:
-                        with engine.lock:
-                            token = engine.notify_cfg["telegram"]["token"]
-                    if not token:
-                        raise ValueError("請先填 Bot Token")
-                    chats, error = N.telegram_find_chats(token)
-                    if error:
-                        raise ValueError(error)
-                    return self.send_json({"chats": chats})
-            except ValueError as exc:
-                return self.send_json({"error": str(exc)}, 400)
-            return self.send_json({"error": "not found"}, 404)
+            code, obj = API.post(engine, path, body, is_local=self.is_local())
+            self.send_json(obj, code)
 
     return Handler
 
