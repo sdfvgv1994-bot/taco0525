@@ -49,6 +49,13 @@ tw/data/hist/<代號>.json   個股歷史（最多 HIST_MAX_DAYS 天，舊 → �
       "volume": [...],                      張
       "inst": {"dates": [...], "foreign": [...], "trust": [...], "dealer": [...]} 或 null,   張
       "margin": {"dates": [...], "margin_balance": [...], "short_balance": [...]} 或 null     張
+      "dividends": [                        近 DIV_YEARS 年的除權除息（新 → 舊）或 null
+        {"date": "2026-08-05", "kind": "權息",   "息" 除息、"權" 除權、"權息" 兩個都有
+         "cash": 0.8,                       現金股利（元／股）；上市的「權」「權息」明細還沒問到時 null
+         "stock": 0.25,                     股票股利（元／股，每千股配 25 股 = 0.25 元）；同上
+         "total": 1.395122,                 權值＋息值（元，交易所算的，一定有）
+         "before": 25.2, "ref": 23.8}       除權息前收盤價、參考價
+      ]
     }
 """
 from __future__ import annotations
@@ -57,8 +64,10 @@ import math
 import re
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
+EXRIGHT_KINDS = ("息", "權", "權息")
 HIST_MAX_DAYS = 250          # 個股歷史最多保留幾個交易日（約一年）
 CHIPS_MAX_DAYS = 20          # 個股法人、融資融券最多保留幾天
+DIV_YEARS = 6                # 除權除息保留幾年（今年＋前 5 年）
 
 STOCK_FIELDS = [
     "code",            # 代號
@@ -255,4 +264,17 @@ def check_hist(d: dict) -> list:
             v = sub.get(c)
             if not isinstance(v, list) or len(v) != m or not all(_num_or_none(x) for x in v):
                 p.append(f"{key}.{c} 長度或內容不對")
+    div = d.get("dividends")
+    if div is not None:
+        if not isinstance(div, list) or not div or not all(isinstance(x, dict) for x in div):
+            p.append("dividends 要是清單（沒有就是 null）")
+        else:
+            ds = [x.get("date") for x in div]
+            if not all(_date(x) for x in ds) or ds != sorted(set(ds), reverse=True):
+                p.append("dividends 的日期要由新到舊、不重複")
+            for x in div:
+                if x.get("kind") not in EXRIGHT_KINDS:
+                    p.append(f"dividends {x.get('date')} 的 kind 不對")
+                if not all(_num_or_none(x.get(k)) for k in ("cash", "stock", "total", "before", "ref")):
+                    p.append(f"dividends {x.get('date')} 的數字不對")
     return p

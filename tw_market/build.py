@@ -240,6 +240,39 @@ def _chips(store: Store, dataset: str, cols: tuple, latest: date, hists: dict, m
             h[key] = {"dates": [iso for iso, _ in loaded], **vals}
 
 
+def _dividends(store: Store, latest: date, hists: dict, markets: dict, used: list) -> None:
+    """近 DIV_YEARS 年的除權除息放進每檔的歷史（新 → 舊）；沒有就是 null。
+    股票股利換成元（每千股配 25 股 = 0.25 元）。上市「權」「權息」的現金、股票要等明細問到才有，
+    在那之前是 null，只有 total（權值＋息值）。"""
+    details = store.exright_details()
+    used.append(f"exright/detail/{sum(1 for v in details.values() if 'cash' in v)}")
+    events: dict[str, list] = {}
+    for mk in MARKETS:
+        for y in range(latest.year - contract.DIV_YEARS + 1, latest.year + 1):
+            js = store.exright(mk, y)
+            if not js:
+                continue
+            used.append(f"exright/{mk}/{y}/{js['upto']}/{len(js['rows'])}")
+            for r in js["rows"]:
+                if not isinstance(r, dict):
+                    continue
+                code, d = r.get("code"), r.get("date")
+                if code not in hists or markets.get(code) != mk or not contract._date(d) or d > latest.isoformat():
+                    continue
+                cash, stock = _n(r.get("cash")), _n(r.get("stock"))
+                if cash is None and mk == "tse":
+                    det = details.get(f"{code}/{d}") or {}
+                    cash, stock = _n(det.get("cash")), _n(det.get("stock"))
+                kind = r.get("kind") if r.get("kind") in contract.EXRIGHT_KINDS else None
+                events.setdefault(code, {})[d] = {
+                    "date": d, "kind": kind, "cash": cash,
+                    "stock": None if stock is None else round(stock / 100, 4) + 0.0,
+                    "total": _n(r.get("value")), "before": _n(r.get("before")), "ref": _n(r.get("ref"))}
+    for code, h in hists.items():
+        ev = events.get(code)
+        h["dividends"] = [ev[d] for d in sorted(ev, reverse=True)] if ev else None
+
+
 def _checked(store: Store) -> datetime | None:
     """上一次確認資料是最新的時間（update 記在 status.json）。"""
     try:
@@ -330,6 +363,7 @@ def assemble(store: Store, now: datetime | None = None, log=print, fetch_failed:
     markets = {s["code"]: s["market"] for s in stocks}
     _chips(store, "insti", ("foreign", "trust", "dealer"), latest, hists, markets, used)
     _chips(store, "margin", ("margin_balance", "short_balance"), latest, hists, markets, used)
+    _dividends(store, latest, hists, markets, used)
     if history_days < contract.HIST_MAX_DAYS:
         notes.append(f"歷史 K 線還在補齊中（目前 {history_days} 天）")
     for mk in with_rows:      # 一個市場一直補不到（例如網站改了），另一個市場已經補齊

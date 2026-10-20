@@ -392,3 +392,73 @@ def test_output_is_plain_json(fn, name):
     assert json.loads(text) == out
     codes = out.get("rows", out if "industry" in name else {})
     assert all(classify(c) is not None for c in codes)   # 只有股票和 ETF
+
+
+# ---------------------------------------------------------------- 除權除息
+# twse_exright_20260806.json：2026/08/03～08/06 的真實回應（43 筆，沒刪）
+# tpex_exright_2026q3.json：2026/07/01～09/30 的真實回應，只留幾筆（除息、除權、除權息、ETF）
+# twse_exright_detail_2801.json：彰銀 2026/08/05 的除權息明細
+def test_exright_urls():
+    u, p = S.twse_exright(D)
+    assert f"{u}?{urlencode(p)}" == \
+        "https://www.twse.com.tw/rwd/zh/exRight/TWT49U?startDate=20260101&endDate=20261008&response=json"
+    u, p = S.tpex_exright(D)
+    assert f"{u}?{urlencode(p)}" == ("https://www.tpex.org.tw/www/zh-tw/bulletin/exDailyQ"
+                                     "?startDate=2026%2F01%2F01&endDate=2026%2F10%2F08&response=json")
+    u, p = S.twse_exright_detail("2801", date(2026, 8, 5))
+    assert f"{u}?{urlencode(p)}" == \
+        "https://www.twse.com.tw/rwd/zh/exRight/TWT49UDetail?STK_NO=2801&T1=20260805&response=json"
+
+
+def test_iso_accepts_roc_chinese_dates():
+    assert S._iso("115年08月05日") == "2026-08-05"
+    assert S._iso("114年7月31日") == "2025-07-31"
+
+
+def test_twse_exright():
+    out = S.parse_twse_exright(fx("twse_exright_20260806.json"))
+    rows = {(r["code"], r["date"]): r for r in out["rows"]}
+    assert len(out["rows"]) == 42          # 43 筆，其中 1 筆不是股票或 ETF
+    assert [r["date"] for r in out["rows"]] == sorted(r["date"] for r in out["rows"])
+    # 權息：計算結果表分不出現金和股票，要再問明細
+    assert rows[("2801", "2026-08-05")] == {
+        "code": "2801", "date": "2026-08-05", "kind": "權息", "before": 25.2, "ref": 23.8, "value": 1.395122,
+        "cash": None, "stock": None}
+    # 息：現金股利 = 權值＋息值
+    r = rows[("1465", "2026-08-03")]
+    assert (r["kind"], r["cash"], r["stock"], r["before"], r["ref"]) == ("息", 0.3, 0.0, 12.7, 12.4)
+
+
+def test_tpex_exright():
+    out = S.parse_tpex_exright(fx("tpex_exright_2026q3.json"))
+    rows = {r["code"]: r for r in out["rows"]}
+    assert set(rows) == {"00950B", "1294", "5864", "2947", "5347", "3546", "5274", "5547", "6488"}
+    assert rows["6488"] == {"code": "6488", "date": "2026-07-16", "kind": "息", "before": 1480.0, "ref": 1474.3,
+                            "value": 5.7, "cash": 5.7, "stock": 0.0}
+    # 除權息：櫃買中心直接有現金股利、每千股配股（199.99998018 股取到小數 4 位 = 200 股）
+    assert pick(rows["1294"], "kind", "cash", "stock") == ("權息", 3.0, 200.0)
+    assert pick(rows["2947"], "kind", "cash", "stock") == ("權", 0.0, 100.0)
+    assert rows["5347"]["cash"] == 4.4738
+
+
+def test_twse_exright_detail():
+    assert S.parse_twse_exright_detail(fx("twse_exright_detail_2801.json")) == {"code": "2801", "cash": 0.8, "stock": 25.0}
+
+
+def test_exright_no_data():
+    assert S.parse_twse_exright({"stat": "很抱歉，沒有符合條件的資料!"}) is None
+    js = fx("tpex_exright_2026q3.json")
+    js["tables"][0]["data"] = []
+    assert S.parse_tpex_exright(js) is None
+    assert S.parse_twse_exright_detail({"stat": "很抱歉，沒有符合條件的資料!"}) is None
+
+
+def test_exright_format_changes_raise():
+    js = fx("twse_exright_20260806.json")
+    js["fields"] = [f.replace("權/息", "類別") for f in js["fields"]]
+    with pytest.raises(ValueError):
+        S.parse_twse_exright(js)
+    js = fx("tpex_exright_2026q3.json")
+    js["tables"][0]["data"][0][8] = "減資"
+    with pytest.raises(ValueError):
+        S.parse_tpex_exright(js)
