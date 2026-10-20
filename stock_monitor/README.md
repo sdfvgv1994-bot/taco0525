@@ -28,13 +28,16 @@
 ```
  desktop_app.py   web_app.py + web/   monitor.py       ← 畫面：只管按鈕、表格、網頁
         └──────────┬──────┘               │
-                live.py（背景更新、提醒紀錄、通知、新聞、給畫面的資料）
+                live.py（背景更新、自選股與下單、給畫面的資料）
+                  ├ live_notify.py（提醒紀錄、LINE / Telegram / Discord 通知、每日新聞推播）
+                  └ live_cloud.py（雲端帳戶：讀雲端的帳戶與設定、下單和改設定送到雲端）
                    └──────────┬───────────┘
                     engine.py（看盤引擎，雲端看盤也用這個）
      ┌──────────┬────────┼─────────┬──────────┐
  signals.py  account.py  storage.py  common/（代號、證交所 / Yahoo 資料、策略、指標、成本）
  訊號/停損    模擬帳戶     存檔
  另外：notify.py（LINE / Telegram / Discord）、news.py（財經新聞）、market_data.py（K 線、基本面、籌碼）
+ 桌面版的 4 個設定視窗在 dialogs.py；雲端帳戶的連線在 cloud_link.py
 ```
 
 ## 從舊版搬過來
