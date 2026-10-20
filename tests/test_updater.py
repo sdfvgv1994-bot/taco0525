@@ -291,3 +291,15 @@ def test_two_programs_starting_together_keep_the_backup(repos):
     assert results == ["latest", "updated"]                 # 只有一個真的做更新
     patches = list((user / ".cache" / "backup").glob("*.patch"))
     assert len(patches) == 1 and "precious local edit" in patches[0].read_text(encoding="utf-8")
+
+
+def test_restart_follows_moved_games(tmp_path, monkeypatch):
+    """用舊路徑（snake/snake.py）啟動、更新後舊檔不見了：改用 games/ 裡的新路徑重啟。"""
+    from common import updater
+    monkeypatch.setattr(updater, "ROOT", tmp_path)
+    (tmp_path / "games" / "snake").mkdir(parents=True)
+    (tmp_path / "games" / "snake" / "snake.py").write_text("")
+    old = str(tmp_path / "snake" / "snake.py")
+    assert updater._moved([old, "--x"]) == [str(tmp_path / "games" / "snake" / "snake.py"), "--x"]
+    other = str(tmp_path / "stock_monitor" / "monitor.py")
+    assert updater._moved([other]) == [other]        # 沒搬過的不動

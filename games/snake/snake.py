@@ -9,8 +9,10 @@ import os
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]   # 專案根目錄（games/<遊戲>/ 往上兩層）
+
 if __name__ == "__main__":  # 先自動更新，再匯入 pygame
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    sys.path.insert(0, str(ROOT))
     from common.updater import check_and_update
     check_and_update()
 
@@ -30,6 +32,18 @@ TEXT = (230, 230, 240)
 
 KEYS = {pygame.K_UP: UP, pygame.K_w: UP, pygame.K_DOWN: DOWN, pygame.K_s: DOWN,
         pygame.K_LEFT: LEFT, pygame.K_a: LEFT, pygame.K_RIGHT: RIGHT, pygame.K_d: RIGHT}
+
+
+def _highscore_path() -> Path:
+    """最高分存在 games/snake/highscore.json；以前放在 snake/highscore.json，第一次執行時搬過來。"""
+    new, old = Path(__file__).parent / "highscore.json", ROOT / "snake" / "highscore.json"
+    if not new.exists() and old.exists():
+        try:
+            old.replace(new)
+            old.parent.rmdir()      # 舊資料夾空了就刪掉（還有其他檔案就留著）
+        except OSError:
+            pass
+    return new
 
 
 def load_font(size):
@@ -87,7 +101,7 @@ def main():
     fonts = (load_font(40), load_font(20))
     clock = pygame.time.Clock()
     game = SnakeGame(COLS, ROWS)
-    hs = HighScore(Path(__file__).parent / "highscore.json")
+    hs = HighScore(_highscore_path())
     paused, new_record, acc, tick = False, False, 0.0, 0
 
     while True:

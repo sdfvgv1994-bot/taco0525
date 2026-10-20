@@ -21,8 +21,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]   # 專案根目錄（games/<遊戲>/ 往上兩層）
+
 if __name__ == "__main__":  # 先自動更新，再匯入 pygame
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    sys.path.insert(0, str(ROOT))
     from common.updater import check_and_update
     check_and_update()
 
@@ -36,6 +38,13 @@ W, H = 900, 900
 BG = (12, 12, 20)
 TEXT = (220, 220, 235)
 SAVE_DIR = Path(__file__).parent / "drawings"
+OLD_SAVE_DIR = ROOT / "kaleidoscope" / "drawings"     # 以前存在這裡，第一次執行時搬過來
+if not SAVE_DIR.exists() and OLD_SAVE_DIR.is_dir():
+    try:
+        OLD_SAVE_DIR.replace(SAVE_DIR)
+        OLD_SAVE_DIR.parent.rmdir()
+    except OSError:
+        pass
 HELP = ["拖曳滑鼠畫圖", "R 隨機花樣   U 撤銷   C 清空   S 存 SVG",
         "+/- 對稱數   M 鏡像   [ ] 粗細   H 隱藏說明   Esc 離開"]
 

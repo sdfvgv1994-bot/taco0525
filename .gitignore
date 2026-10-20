@@ -5,6 +5,8 @@ __pycache__/
 .DS_Store
 stock_monitor/data/
 stock_backtest/output/
+games/snake/highscore.json
+games/kaleidoscope/drawings/
 snake/highscore.json
 kaleidoscope/drawings/
 .pytest_cache/

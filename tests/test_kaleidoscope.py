@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kaleidoscope"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "games" / "kaleidoscope"))
 
 from pattern import Stroke, copies, random_pattern, symmetric_polylines, to_svg  # noqa: E402
 

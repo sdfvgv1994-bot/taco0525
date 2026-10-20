@@ -1,7 +1,7 @@
 # 貪食蛇
 
 ```bash
-python snake/snake.py
+python games/snake/snake.py
 ```
 
 | 按鍵 | 動作 |
@@ -14,4 +14,4 @@ python snake/snake.py
 - 🔴 普通果子 +1 分，🟡 金色果子 +5 分（1/4 機率出現，會閃）
 - 吃越多跑越快（上限每秒 20 格）
 - 連按兩個方向會依序轉彎，不會直接迴轉撞到自己
-- 最高分自動存在 `snake/highscore.json`
+- 最高分自動存在 `games/snake/highscore.json`

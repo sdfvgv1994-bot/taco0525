@@ -180,6 +180,25 @@ def _update(out) -> tuple[str, bool]:
     return "updated", True
 
 
+# 搬過位置的程式（舊路徑 → 新路徑，相對專案根目錄）：用舊路徑啟動、更新後舊檔不見了，就改用新路徑重啟
+MOVED = {"snake/snake.py": "games/snake/snake.py", "kaleidoscope/kaleidoscope.py": "games/kaleidoscope/kaleidoscope.py"}
+
+
+def _moved(argv: list) -> list:
+    """argv[0] 是已經搬走的程式就換成新路徑；其他情況原樣回傳。"""
+    if not argv:
+        return argv
+    script = Path(argv[0])
+    if script.exists():
+        return argv
+    try:
+        rel = script.resolve().relative_to(ROOT.resolve()).as_posix()
+    except (OSError, ValueError):
+        return argv
+    new = MOVED.get(rel)
+    return [str(ROOT / new), *argv[1:]] if new and (ROOT / new).exists() else argv
+
+
 def check_and_update(argv: list | None = None, restart: bool = True, out=print) -> str:
     """回傳 'disabled' / 'skipped' / 'latest' / 'updated'。更新且 restart=True 時直接用新版重啟、不會回傳。
 
@@ -201,6 +220,7 @@ def check_and_update(argv: list | None = None, restart: bool = True, out=print) 
         out(f"ℹ 無法檢查更新（{e.__class__.__name__}），先用目前的版本")
         return "skipped"
     if need_restart and restart:
+        argv = _moved(argv)
         os.environ[_ENV_DONE] = "1"
         out("   用新版重新啟動…\n")
         sys.stdout.flush()
