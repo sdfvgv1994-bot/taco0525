@@ -9,7 +9,7 @@ GitHub Actions 每 15 分鐘執行一次，每次依重要性排隊抓：
   6. 除權除息：今年＋前幾年（contract.DIV_YEARS），一年問一次；過去的年份存了就不再問，
      今年的有新的交易日（行情的最新一天往後）才再問一次（快取一天最多多存一次）。
      上市「權」「權息」再一檔一檔問明細（分出現金和股票），
-     每次最多 DETAIL_PER_RUN 筆
+     每次最多 exright.DETAIL_PER_RUN 筆（tw_market/exright.py）
 每個網站每次最多連 max_per_host 次、總共最多 deadline_s 秒，抓不完的下次繼續。
 證交所和櫃買中心的請求交錯送出，兩邊各自的 3 秒間隔可以重疊，比較快。
 
@@ -37,7 +37,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from common.twse import TwseError
-from tw_market import contract
+from tw_market import contract, exright
 from tw_market.store import MARKETS, Store, valid_day
 
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -50,7 +50,6 @@ NET_ERRORS_PER_HOST = 2        # 同一個網站連線失敗（逾時等）幾�
 KEEP_EXTRA_DAYS = 30           # 清快取時多留幾天，避免剛好用得到的被刪掉
 MISS_TRIES = 3                 # 過去的日子應該有卻沒有：前幾次每次都問，之後一天只再問一次
 MISS_STREAK = 2                # 同一次執行裡同一類資料連續幾天應該有卻沒有，就當成網站有問題，這次先不抓
-DETAIL_PER_RUN = 8             # 上市除權息明細每次最多問幾筆（歷史一次補不完，慢慢補）
 
 LABELS = {"quotes": "行情", "insti": "三大法人", "insti_totals": "三大法人買賣金額",
           "margin": "融資融券", "valuation": "本益比", "otc_index": "櫃買指數", "industry": "產業別",
@@ -485,7 +484,7 @@ class _Updater:
                         tasks.append((ds, m, d))
         self.run(tasks)
 
-    # ---- 除權除息（不在上面的排程表裡：一年一個檔、明細一檔一筆） ----
+    # ---- 除權除息（排程在 tw_market/exright.py；這裡只放共用的連線限制） ----
     def get_raw(self, url, params, what):
         """送一個請求（和 fetch 一樣的限制：網站停用、時間、次數、封鎖）；拿不到回傳 None。"""
         host = urlparse(url).hostname or url
@@ -515,82 +514,13 @@ class _Updater:
         return None
 
     def exright_years(self) -> tuple[date, list[int]]:
-        end = self.latest("quotes")
-        return end, list(range(end.year, end.year - contract.DIV_YEARS, -1))   # 新 → 舊
+        return exright.years(self)
 
     def phase_exright(self) -> None:
-        if not hasattr(self.src, "twse_exright"):     # 測試用的假來源沒有這項
-            return
-        end, years = self.exright_years()
-        for y in years:
-            upto = end if y == end.year else date(y, 12, 31)
-            for m in MARKETS:
-                if self.timed_out:
-                    return
-                old = self.store.exright(m, y)
-                if (old and old["upto"] >= upto.isoformat()) or ("exright", m) in self.broken:
-                    continue
-                self.fetch_exright(m, y, upto)
-
-    def fetch_exright(self, market: str, year: int, upto: date) -> None:
-        what = f"{MARKET_NAMES[market]}除權除息 {year}"
-        name = "twse_exright" if market == "tse" else "tpex_exright"
-        url, params = getattr(self.src, name)(upto)
-        js = self.get_raw(url, params, what)
-        if js is None:
-            return
-        try:
-            parsed = getattr(self.src, "parse_" + name)(js)
-        except (ValueError, KeyError, TypeError, IndexError, AttributeError) as e:
-            self.broken.add(("exright", market))
-            self.error(f"{what}：格式和預期不同（{e}），這次先不抓")
-            return
-        rows = [r for r in (parsed or {}).get("rows", [])
-                if isinstance(r, dict) and f"{year}-01-01" <= str(r.get("date")) <= upto.isoformat()]
-        if parsed and not rows:
-            self.broken.add(("exright", market))
-            self.error(f"{what}：回應的日期不對，先不存")
-            return
-        if not rows and year < self.exright_years()[0].year:
-            self.error(f"{what}：一整年都沒有資料，先不存")   # 過去整年都沒有除權息不可能
-            return
-        self.store.save_exright(market, year, upto, self.now.isoformat(timespec="seconds"), rows)
-        self.saved.append(f"exright/{market}/{year}")
-        self.log(f"  {what}：{len(rows)} 筆")
+        exright.phase(self)
 
     def phase_exright_detail(self) -> None:
-        """上市「權」「權息」：計算結果表只有合計，一筆一筆問明細（新 → 舊，每次最多 DETAIL_PER_RUN 筆）。"""
-        if not hasattr(self.src, "twse_exright_detail"):
-            return
-        details = self.store.exright_details()
-        want = []
-        for y in self.exright_years()[1]:
-            js = self.store.exright("tse", y)
-            for r in reversed((js or {}).get("rows", [])):
-                if isinstance(r, dict) and r.get("kind") in ("權", "權息") and r.get("cash") is None:
-                    key = f"{r.get('code')}/{r.get('date')}"
-                    if key not in details:
-                        want.append((r["code"], r["date"], key))
-        want.sort(key=lambda t: t[1], reverse=True)
-        added = 0
-        for code, d, key in want[:DETAIL_PER_RUN]:
-            what = f"上市除權息明細 {code} {d}"
-            url, params = self.src.twse_exright_detail(code, date.fromisoformat(d))
-            js = self.get_raw(url, params, what)
-            if js is None:
-                break
-            try:
-                got = self.src.parse_twse_exright_detail(js)
-            except (ValueError, KeyError, TypeError, IndexError, AttributeError) as e:
-                self.error(f"{what}：格式和預期不同（{e}），這次先不問明細")
-                break
-            details[key] = ({"cash": got["cash"], "stock": got["stock"]} if got and got.get("code") in (code, None)
-                            else {"missing": True})     # 交易所沒有明細：記下來，不再一直問
-            added += 1
-        if added:
-            self.store.save_exright_details(details)
-            self.saved.append("exright/detail_tse")
-            self.log(f"  上市除權息明細：{added} 筆（還有 {max(0, len(want) - added)} 筆下次再問）")
+        exright.phase_detail(self)
 
     def prune(self) -> None:
         """刪掉用不到的舊檔，快取才不會一直變大。

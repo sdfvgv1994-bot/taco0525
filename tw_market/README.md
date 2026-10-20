@@ -75,6 +75,7 @@ python -m tw_market.build --out _site/tw --demo       # 示範資料（不連網
 - `contract.py`：網頁資料的格式定義（產生資料的程式、網頁、測試共用）
 - `sources.py`：證交所、櫃買中心各個網址與解析
 - `update.py`：決定這次要抓哪些資料（依重要性排隊、每個網站最多連 25 次、最多 4 分鐘）
+- `exright.py`：除權除息的排程（一年問一次、上市「權息」補明細），是 update.py 的最後一步
 - `store.py`：本機快取
 - `build.py`：把快取組成網頁要的資料並輸出（先寫到暫存資料夾，成功才換掉舊的）
 - `static/index.html`：網頁
