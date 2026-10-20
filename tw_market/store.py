@@ -7,6 +7,8 @@
     otc_index/<YYYYMM>.json          櫃買指數（一個月一個檔，{日期: 開高低收}）
     industry.json                    產業別 {"fetched": 時間, "tse": {代號: 產業}, "otc": {...}}
     calendar.json                    {"closed": [休市的日期]}（平日但沒開盤，例如颱風假、連假）
+    exright/<市場>/<YYYY>.json       除權除息計算結果（一年一個檔）{"year", "upto", "fetched", "rows": [...]}
+    exright/detail_tse.json          上市「權」「權息」的明細 {"代號/日期": {"cash", "stock"}}
     status.json                      抓資料的紀錄（不是資料本身，GitHub Actions 另外保存，每次都存）：
                                      {"checked_utc": 任一個市場最後一次確認資料是最新的時間,
                                       "checked": {"tse": 上市最後一次確認的時間, "otc": ...},
@@ -229,3 +231,52 @@ class Store:
 
     def save_status(self, js: dict) -> None:
         write_json(self.root / "status.json", js)
+
+    # ---- 除權除息（一年一個檔）＋上市「權」「權息」的明細 ----
+    def _exright_path(self, market: str, year: int) -> Path:
+        return self.root / "exright" / market / f"{year}.json"
+
+    def exright(self, market: str, year: int) -> dict | None:
+        """{"year", "upto"（問到哪一天，含）, "fetched"（台北時間）, "rows": [...]}；沒有或格式不對 → None。"""
+        p = self._exright_path(market, year)
+        js = read_json(p, self._touch)
+        if js is None:
+            return None
+        if not (isinstance(js, dict) and js.get("year") == year and isinstance(js.get("rows"), list)
+                and isinstance(js.get("upto"), str) and isinstance(js.get("fetched"), str)):
+            if _unlink(p):
+                self._touch()
+            return None
+        return js
+
+    def save_exright(self, market: str, year: int, upto: date, fetched: str, rows: list) -> None:
+        write_json(self._exright_path(market, year),
+                   {"year": year, "upto": upto.isoformat(), "fetched": fetched, "rows": rows})
+        self._touch()
+
+    def exright_years(self, market: str) -> list[int]:
+        folder = self.root / "exright" / market
+        if not folder.is_dir():
+            return []
+        return sorted(int(p.stem) for p in folder.glob("*.json") if re.fullmatch(r"\d{4}", p.stem))
+
+    def prune_exright(self, keep_from_year: int) -> None:
+        for m in MARKETS:
+            for y in self.exright_years(m):
+                if y < keep_from_year and _unlink(self._exright_path(m, y)):
+                    self._touch()
+        details = self.exright_details()
+        kept = {k: v for k, v in details.items() if k.split("/")[-1][:4] >= str(keep_from_year)}
+        if len(kept) != len(details):
+            self.save_exright_details(kept)
+
+    def exright_details(self) -> dict:
+        """{"2801/2026-08-05": {"cash": 0.8, "stock": 25.0}}（上市「權」「權息」的現金股利、每千股配股）。"""
+        js = read_json(self.root / "exright" / "detail_tse.json", self._touch)
+        if not isinstance(js, dict):
+            return {}
+        return {k: v for k, v in js.items() if isinstance(k, str) and isinstance(v, dict)}
+
+    def save_exright_details(self, details: dict) -> None:
+        write_json(self.root / "exright" / "detail_tse.json", dict(sorted(details.items())))
+        self._touch()

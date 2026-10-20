@@ -95,11 +95,28 @@ def tpex_industry():
     return "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O", {}
 
 
+def twse_exright(d: date):
+    """上市除權除息計算結果表：d 那一年的 1/1 到 d（一年一次問完）。"""
+    return f"{TWSE}/exRight/TWT49U", {"startDate": f"{d.year}0101", "endDate": _ymd(d), "response": "json"}
+
+
+def tpex_exright(d: date):
+    """上櫃除權除息計算結果表：d 那一年的 1/1 到 d（有現金股利、每千股無償配股）。"""
+    return f"{TPEX}/bulletin/exDailyQ", {"startDate": f"{d.year}/01/01", "endDate": _slash(d), "response": "json"}
+
+
+def twse_exright_detail(code: str, d: date):
+    """上市某一檔某一天除權息的明細（現金股利、每千股無償配股）。只有「權」「權息」才需要問：
+    計算結果表只有權值＋息值的合計，分不出現金和股票。"""
+    return f"{TWSE}/exRight/TWT49UDetail", {"STK_NO": code, "T1": _ymd(d), "response": "json"}
+
+
 # ---------------------------------------------------------------- 小工具
 def _iso(s) -> str:
-    """'20261008'、'2026/10/08'、'115/10/08'（民國）→ '2026-10-08'。"""
+    """'20261008'、'2026/10/08'、'115/10/08'、'115年10月08日'（民國）→ '2026-10-08'。"""
     s = str(s).strip()
-    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})", s) or re.fullmatch(r"(\d{2,4})/(\d{1,2})/(\d{1,2})", s)
+    m = (re.fullmatch(r"(\d{4})(\d{2})(\d{2})", s) or re.fullmatch(r"(\d{2,4})/(\d{1,2})/(\d{1,2})", s)
+         or re.fullmatch(r"(\d{2,4})年(\d{1,2})月(\d{1,2})日", s))
     if not m:
         raise ValueError(f"看不懂的日期：{s!r}")
     y, mo, d = (int(x) for x in m.groups())
@@ -529,3 +546,90 @@ def parse_twse_industry(js) -> dict:
 def parse_tpex_industry(js) -> dict:
     """上櫃公司基本資料 → {代號: 產業名稱}。"""
     return _industry(js, "SecuritiesCompanyCode", "SecuritiesIndustryCode")
+
+
+# ---------------------------------------------------------------- 除權除息
+EXRIGHT_KINDS = {"息": "息", "權": "權", "權息": "權息", "除息": "息", "除權": "權", "除權息": "權息"}
+
+
+def _exright_kind(s) -> str:
+    k = EXRIGHT_KINDS.get(re.sub(r"\s", "", str(s)))
+    if k is None:
+        raise ValueError(f"看不懂的權/息：{s!r}")
+    return k
+
+
+def _r4(v):
+    """股利取到小數 4 位：權值＋息值是用參考價（取到 0.01）倒算的，5.000017 其實是 5 元；
+    每千股配股 199.99998018 其實是 200 股。"""
+    return None if v is None else round(v, 4) + 0.0
+
+
+def _exright_out(rows: list) -> dict | None:
+    """同一檔同一天只留一筆，依日期、代號排好。"""
+    if not rows:
+        return None
+    seen = {(r["code"], r["date"]): r for r in rows}
+    return {"rows": sorted(seen.values(), key=lambda r: (r["date"], r["code"]))}
+
+
+def parse_twse_exright(js) -> dict | None:
+    """上市 TWT49U → {"rows": [{"code", "date", "kind": "息"/"權"/"權息", "before"（除權息前收盤價）,
+    "ref"（參考價）, "value"（權值＋息值）, "cash", "stock"（每千股無償配股，股）}]}；沒有資料 → None。
+
+    只有「息」時 cash = 權值＋息值、stock = 0；「權」「權息」分不出現金和股票，cash、stock 是 None
+    （要再問明細 twse_exright_detail）。"""
+    if not _twse(js):
+        return None
+    i = _cols(js.get("fields"), "資料日期", "股票代號", "除權息前收盤價", "除權息參考價", "權值+息值", "權/息")
+    out = []
+    for r in _rows(js.get("data"), max(i) + 1):
+        code = _code(r, i[1])
+        if code is None:
+            continue
+        kind, value = _exright_kind(r[i[5]]), _f(r[i[4]])
+        out.append({"code": code, "date": _iso(r[i[0]]), "kind": kind, "before": _f(r[i[2]]),
+                    "ref": _f(r[i[3]]), "value": value,
+                    "cash": _r4(value) if kind == "息" else None, "stock": 0.0 if kind == "息" else None})
+    return _exright_out(out)
+
+
+def parse_tpex_exright(js) -> dict | None:
+    """上櫃除權除息計算結果表 → 和 parse_twse_exright 一樣的格式（櫃買中心直接有現金股利、每千股無償配股）。"""
+    tables = _tpex(js)
+    if tables is None:
+        return None
+    t = tables[0]
+    i = _cols(t.get("fields"), "除權息日期", "代號", "除權息前收盤價", "除權息參考價", "權值+息值", "權/息",
+              "現金股利", "每仟股無償配股")
+    out = []
+    for r in _rows(t.get("data"), max(i) + 1):
+        code = _code(r, i[1])
+        if code is None:
+            continue
+        out.append({"code": code, "date": _iso(r[i[0]]), "kind": _exright_kind(r[i[5]]), "before": _f(r[i[2]]),
+                    "ref": _f(r[i[3]]), "value": _f(r[i[4]]), "cash": _r4(_f(r[i[6]])), "stock": _r4(_f(r[i[7]]))})
+    return _exright_out(out)
+
+
+def _amount(s) -> float | None:
+    """'0.8 元／股'、'25 股'、'0.00000000 股' → 數字；空白 → None。"""
+    m = re.search(r"-?[\d,]*\.?\d+", str(s or ""))
+    return _f(m.group(0)) if m else None
+
+
+def parse_twse_exright_detail(js) -> dict | None:
+    """上市除權息明細 → {"code", "cash"（每股現金股利，元）, "stock"（每千股無償配股，股）}；沒有資料 → None。"""
+    if not isinstance(js, dict):
+        raise ValueError("回應不是 JSON 物件")
+    stat = str(js.get("stat", "")).strip()
+    if stat.startswith(NO_DATA):
+        return None
+    if stat.lower() != "ok":
+        raise ValueError(f"證交所回應：{stat or '（沒有 stat）'}")
+    i = _cols(js.get("fields"), "股票代號", "(每股配發現金股利)除息", "A.按普通股股東持股比例每千股無償配股")
+    data = _rows(js.get("data"), max(i) + 1)
+    if not data:
+        return None
+    r = data[0]
+    return {"code": str(r[i[0]]).strip(), "cash": _amount(r[i[1]]) or 0.0, "stock": _amount(r[i[2]]) or 0.0}

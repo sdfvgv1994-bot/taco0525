@@ -58,6 +58,17 @@ class FixtureExchange:
 
     @staticmethod
     def _match(url, params):
+        if "T1" in params:      # 上市除權息明細
+            t = params["T1"]
+            d = date(int(t[:4]), int(t[4:6]), int(t[6:8]))
+            if S.twse_exright_detail(params.get("STK_NO"), d) == (url, params):
+                return "twse_exright_detail", d
+        if "endDate" in params:     # 除權除息：一年一次（1/1 到 endDate）
+            raw = str(params["endDate"]).replace("/", "")
+            d = date(int(raw[:4]), int(raw[4:6]), int(raw[6:8]))
+            for name in ("twse_exright", "tpex_exright"):
+                if getattr(S, name)(d) == (url, params):
+                    return name, d
         for name in UNDATED:
             if getattr(S, name)() == (url, params):
                 return name, None
@@ -73,6 +84,15 @@ class FixtureExchange:
         self.calls.append((name, d))
         if d is None:
             return _fx(f"{name}.json")
+        if name == "twse_exright_detail":
+            return _fx("twse_exright_detail_2801.json")
+        if name in ("twse_exright", "tpex_exright"):
+            # 2026 年用真實回應；其他年份把同一份資料換成那一年（數字不變）
+            fx = "twse_exright_20260806.json" if name == "twse_exright" else "tpex_exright_2026q3.json"
+            text = (FIX / fx).read_text(encoding="utf-8")
+            if d.year != 2026:
+                text = text.replace("115年", f"{d.year - 1911}年").replace('"115/', f'"{d.year - 1911}/')
+            return json.loads(text)
         if name == "tpex_index_month":
             js = _fx("tpex_index_month_20261008.json")
             if (d.year, d.month) != (2026, 10):
@@ -231,3 +251,32 @@ def test_fixture_exchange_serves_every_source(name):
     assert out is not None
     later = REAL + timedelta(days=7)
     assert ex._match(*getattr(S, name)(later)) == (name, later)
+
+
+def test_dividends_end_to_end(tmp_path, monkeypatch):
+    """除權除息：今年＋前 5 年，一年問一次；上市「權息」再問明細；放進個股歷史。"""
+    monkeypatch.setattr(contract, "HIST_MAX_DAYS", 5)      # 歷史少一點，測試比較快
+    monkeypatch.setattr(contract, "CHIPS_MAX_DAYS", 3)
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=TPE)
+    ex, r, logs = _build(tmp_path, now, max_per_host=200)
+    assert r["update"]["errors"] == []
+    for name in ("twse_exright", "tpex_exright"):
+        assert sorted(d.year for n, d in ex.calls if n == name) == list(range(2021, 2027))
+    assert any(n == "twse_exright_detail" for n, _ in ex.calls)
+    assert all(d is None or d <= HOLIDAY for _, d in ex.calls)
+
+    data, summary, stocks, rows = _read(tmp_path)
+    _check_files(data, summary, stocks)
+    h = json.loads((data / "hist" / "6488.json").read_text(encoding="utf-8"))
+    assert h["dividends"][0] == {"date": "2026-07-16", "kind": "息", "cash": 5.7, "stock": 0.0, "total": 5.7,
+                                 "before": 1480.0, "ref": 1474.3}
+    assert [x["date"] for x in h["dividends"]] == [f"{y}-07-16" for y in range(2026, 2020, -1)]
+
+    # 明細：快取裡記下彰銀 2026/08/05 的現金 0.8 元、每千股配 25 股
+    det = json.loads((tmp_path / "cache" / "exright" / "detail_tse.json").read_text(encoding="utf-8"))
+    assert det["2801/2026-08-05"] == {"cash": 0.8, "stock": 25.0}
+
+    # 15 分鐘後再跑：過去的年份不再問，今年的也要等有新的交易日才再問
+    ex2, r2, _ = _build(tmp_path, now + timedelta(minutes=15), max_per_host=200)
+    assert not any(n in ("twse_exright", "tpex_exright") for n, _ in ex2.calls)
+    assert r2["update"]["errors"] == []

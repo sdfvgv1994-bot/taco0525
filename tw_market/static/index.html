@@ -297,6 +297,11 @@ dialog#dlg::backdrop { background: rgba(0,0,0,.45); }
 .ma { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
 .ma.ma5 { stroke: var(--ma5); } .ma.ma20 { stroke: var(--ma20); } .ma.ma60 { stroke: var(--ma60); }
 .ind { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.exmark { fill: var(--accent); }
+.exmark-t { font-size: 10px; fill: var(--accent); font-weight: 600; }
+.divsum { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+.divsum b { font-weight: 650; }
+.kind { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
 .ind.l1 { stroke: var(--ma5); } .ind.l2 { stroke: var(--ma20); }
 .ind-lvl { stroke: var(--axis); stroke-dasharray: 3 3; }
 .chart .ptitle { font-size: 11px; fill: var(--ink-2); font-variant-numeric: tabular-nums; }
@@ -427,6 +432,7 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
       <div class="legend" id="dLegend"></div>
       <div class="chart" id="dChart"></div>
     </section>
+    <section class="dsec" id="dDiv" hidden></section>
     <section class="dsec" id="dInst" hidden></section>
     <section class="dsec" id="dMargin" hidden></section>
     <div class="watch">
@@ -1566,7 +1572,7 @@ function openDetail(code, push) {
   renderPeriods();
   $("dLegend").replaceChildren();
   $("dChart").replaceChildren(el("div", { class: "loading" }, "載入歷史資料中…"));
-  for (const id of ["dInst", "dMargin"]) { $(id).hidden = true; $(id).replaceChildren(); }
+  for (const id of ["dDiv", "dInst", "dMargin"]) { $(id).hidden = true; $(id).replaceChildren(); }
   if (!dlg.open) dlg.showModal();
   dlg.scrollTop = 0;
   loadHist(code, cur.seq);
@@ -1682,6 +1688,7 @@ async function loadHist(code, mySeq) {
   cur.hist = h;
   try {
     drawChart();
+    renderDividends(h);
     renderInst(h);
     renderMargin(h);
   } catch (e) {
@@ -1708,7 +1715,8 @@ function prepHist(j) {
   const h = { code: j.code, name: j.name, dates, open: arr(j.open), high: arr(j.high), low: arr(j.low),
               close: arr(j.close), volume: arr(j.volume),
               inst: j.inst && typeof j.inst === "object" ? j.inst : null,
-              margin: j.margin && typeof j.margin === "object" ? j.margin : null };
+              margin: j.margin && typeof j.margin === "object" ? j.margin : null,
+              dividends: Array.isArray(j.dividends) ? j.dividends.filter((x) => x && typeof x === "object" && parseD(x.date)) : [] };
   // 均線用全部歷史算，圖的最左邊也有值（歷史夠長的話）
   h.ma = { 5: movingAvg(h.close, 5), 20: movingAvg(h.close, 20), 60: movingAvg(h.close, 60) };
   h.views = {};
@@ -1905,6 +1913,19 @@ function drawChart() {
     }
     if (d) sv.append(svg("path", { class: "ma " + c, d }));
   }
+  // 除權息日：價格圖底部標「息」「權」（週K、月K 標在包含那天的那一根）
+  for (const dv of cur.hist.dividends) {
+    let i = -1;
+    for (let k = s; k < N; k++) if (h.dates[k] <= dv.date && dv.date <= h.ends[k]) { i = k; break; }
+    if (i < 0 && h.kper === "d") { const k = h.dates.findIndex((x) => x >= dv.date); if (k >= s && h.dates[k] !== undefined) i = k; }
+    if (i < 0) continue;
+    const x = X(i), yb = m.t + PH - 2;
+    sv.append(svg("path", { class: "exmark", d: `M${f1(x)},${f1(yb - 6)}l4,6h-8z` }));
+    const t = svg("text", { class: "exmark-t", x: f1(x), y: f1(yb - 9), "text-anchor": "middle" });
+    t.textContent = dv.kind === "息" ? "息" : "權";
+    sv.append(t);
+  }
+
   // KD、MACD 小圖（在成交量下面，共用同一條十字線）
   const kTop = vBot + IG, kBot = kTop + IH, mTop = kBot + IG, mBot = mTop + IH;
   const line = (arr, Yf, cls) => {
@@ -2049,6 +2070,49 @@ function drawChart() {
   box.replaceChildren(sv, tip);
   renderLegend(h, lastI);
   indTitles(lastI);
+}
+
+// 配息配股：最近一次、近一年現金股利與殖利率、歷年明細（含填權息天數）
+function renderDividends(h) {
+  const box = $("dDiv"), list = h.dividends || [];
+  if (!list.length) { box.hidden = true; box.replaceChildren(); return; }
+  const r = byCode.get(cur.code), close = r && isNum(r.close) ? r.close : h.close[lastValid(h.close, h.close.length - 1)];
+  const amt = (v) => (isNum(v) ? fmt(v, 4).replace(/(\.\d\d\d*?)0+$/, "$1") : "—");   // 0.068、5.70、4.4738
+  // 填權息：除權息當天算第 1 天，收盤價回到除權息前的收盤價就算填完（只看得到近一年的 K 線）
+  const fill = (dv) => {
+    if (!isNum(dv.before) || !h.dates.length || dv.date < h.dates[0]) return "—";
+    const s = h.dates.findIndex((d) => d >= dv.date);
+    if (s < 0) return "—";
+    for (let i = s; i < h.dates.length; i++) if (h.close[i] != null && h.close[i] >= dv.before) return `${i - s + 1} 天`;
+    return dv.kind === "息" ? "還沒填息" : "還沒填權息";
+  };
+  const last = list[0];
+  const lastDate = h.dates[h.dates.length - 1] || last.date;
+  const yearAgo = shiftDays(lastDate, -365);
+  const recent = list.filter((x) => x.date > yearAgo);
+  const cashYear = recent.every((x) => isNum(x.cash)) ? recent.reduce((a, x) => a + x.cash, 0) : null;
+  const pending = list.some((x) => x.cash == null);
+  const lastText = isNum(last.cash) || isNum(last.stock)
+    ? `現金 <b>${amt(last.cash)}</b> 元${isNum(last.stock) && last.stock > 0 ? `＋股票 <b>${amt(last.stock)}</b> 元` : ""}`
+    : `權息合計 <b>${amt(last.total)}</b> 元`;
+  let rows = "";
+  for (const x of list) {
+    const yld = isNum(x.cash) && isNum(x.before) && x.before > 0 ? x.cash / x.before * 100 : null;
+    rows += `<tr><td class="l">${esc(x.date.replaceAll("-", "/"))}<span class="kind">${esc(x.kind || "")}</span></td>` +
+      `<td>${amt(x.cash)}</td><td>${amt(x.stock)}</td><td>${amt(x.total)}</td>` +
+      `<td>${unit(fmt(yld, 2), "%")}</td><td>${fill(x)}</td></tr>`;
+  }
+  const years = new Set(list.map((x) => x.date.slice(0, 4))).size;
+  box.innerHTML = `<div class="dsec-head"><h4>配息配股（近 ${years} 年）</h4></div>` +
+    `<div class="divsum"><span>最近一次 ${esc(dShort(last.date))}：${lastText}</span>` +
+    (cashYear != null && isNum(close) && close > 0
+      ? `<span>近一年現金股利 <b>${amt(cashYear)}</b> 元，以收盤價 ${price(close)} 計算殖利率 <b>${fmt(cashYear / close * 100, 2)}%</b></span>` : "") +
+    `</div>` +
+    `<div class="sub">股票股利換成元：每千股配 25 股 = 0.25 元。殖利率 = 現金股利 ÷ 除權息前一天的收盤價。填權息：除權息當天算第 1 天，收盤價回到除權息前的價格。` +
+    (pending ? "「—」是上市的除權息明細還在補（雲端每次問幾筆），合計是交易所公布的權值＋息值。" : "") + `</div>` +
+    `<div class="mini-wrap"><table class="t mini"><thead><tr><th class="l">除權息日</th><th>現金</th><th>股票</th><th>合計</th>` +
+    `<th>殖利率</th><th>填權息</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  box.hidden = false;
 }
 
 function renderInst(h) {
