@@ -47,5 +47,18 @@
     "status": "rejected",
     "message": "現金不足：需要 44,313，可用 21,913",
     "handled": "2026-10-20 09:19"
+  },
+  {
+    "id": "pc-1a156f8ce93",
+    "time": "2026-10-20T09:41:48",
+    "code": "2890",
+    "side": "buy",
+    "shares": 200,
+    "status": "done",
+    "price": 44.3,
+    "fee": 20,
+    "tax": 0.0,
+    "message": "買進 200 股 @ 44.30",
+    "handled": "2026-10-20 09:42"
   }
 ]
