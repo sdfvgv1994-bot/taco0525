@@ -1,0 +1,25 @@
+# 暫時用：跑完整測試，確認後刪掉
+name: tmp 測試
+on:
+  push:
+    branches: ["blocks-*-ci"]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: pytest
+        run: |
+          python -m pytest tests -q -p no:cacheprovider > out.txt 2>&1 || true
+          echo "::notice title=pytest::$(tail -1 out.txt)"
+          grep -E "^(FAILED|ERROR)" out.txt | head -20 | while read l; do echo "::error::$l"; done
+      - name: demo smoke
+        run: |
+          python -m tw_market.build --out _site/tw --demo > /dev/null && echo "::notice title=tw demo::ok"
+          python -c "import stock_monitor.web_app, stock_monitor.desktop_app" 2>&1 | tail -1; echo "::notice title=imports::done"
