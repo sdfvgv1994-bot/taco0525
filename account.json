@@ -23,7 +23,8 @@
     "2890": {
       "shares": 200,
       "avg_cost": 44.4,
-      "tw": true
+      "tw": true,
+      "peak": 44.4
     }
   },
   "trades": [
