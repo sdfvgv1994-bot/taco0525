@@ -3,6 +3,5 @@ pandas
 numpy
 requests
 matplotlib
-pygame-ce
 pytest
 tzdata

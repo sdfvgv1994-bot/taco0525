@@ -1,4 +1,4 @@
-# 雲端看板（GitHub Actions）只需要這些，不用裝 pygame、matplotlib
+# 雲端看板（GitHub Actions）只需要這些，不用裝 matplotlib
 pandas
 numpy
 yfinance
