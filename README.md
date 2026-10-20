@@ -1,6 +1,6 @@
 # taco0525
 
-個人小專案合集。
+股市程式合集。小遊戲（貪食蛇、萬花筒）搬到 [taco-game](https://github.com/sdfvgv1994-bot/taco-game)。
 
 | 資料夾 | 內容 | 執行 |
 | --- | --- | --- |
@@ -9,8 +9,6 @@
 | [`world_market/`](world_market/) | 全球股市看板（網頁；也有[雲端版](https://sdfvgv1994-bot.github.io/taco0525/)，電腦關機也能用手機看） | `python world_market/app.py` |
 | [`cloud_monitor/`](cloud_monitor/) | 雲端看盤（[網頁](https://sdfvgv1994-bot.github.io/taco0525/monitor/)；GitHub 每 15 分鐘自動跑、模擬交易，手機改設定） | 自動執行，設定在 `cloud_monitor/config.toml` |
 | [`tw_market/`](tw_market/) | 台股總覽（[網頁](https://sdfvgv1994-bot.github.io/taco0525/tw/)；全部上市櫃股票與 ETF 的行情、排行、產業、法人、融資融券、K 線） | 自動執行；手動：`python -m tw_market.build --out _site/tw` |
-| [`snake/`](snake/) | 貪食蛇 | `python snake/snake.py` |
-| [`kaleidoscope/`](kaleidoscope/) | 萬花筒畫板 | `python kaleidoscope/kaleidoscope.py` |
 
 `common/` 是兩個股票工具共用的模組：代號辨識、資料下載、交易成本、技術指標、交易策略。
 
