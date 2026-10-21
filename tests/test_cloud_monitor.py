@@ -50,10 +50,20 @@ class Feed:
         return name, df, float(closes[-1])
 
 
-def run_once(tmp_path, config, feed, now, names=None):
+class NoDividends:
+    """測試用：沒有任何除權息（不連 Yahoo、不讀 .cache/tw）。"""
+    notes: list = []
+    us_checked: dict = {}
+
+    def events(self, codes, since, today):
+        return []
+
+
+def run_once(tmp_path, config, feed, now, names=None, dividend_source=None):
     return cm.run(tmp_path / "state", tmp_path / "site", config, now=now, log=lambda *_: None,
                   monitor_kwargs={"fetcher": feed, "realtime": lambda items: {},
-                                  "name_lookup": (names or {}).get}, fetch_names=False)
+                                  "name_lookup": (names or {}).get}, fetch_names=False,
+                  dividend_source=dividend_source or NoDividends())
 
 
 def test_default_config_is_valid():

@@ -32,9 +32,11 @@ def pick_alerts(alerts: list, primary: str, notify: dict) -> list:
     return out
 
 
-def build_message(trades: list, alerts: list, names: dict, when: str) -> dict | None:
-    """回傳 ntfy 的 JSON 內容（不含 topic）；沒有東西要通知時回傳 None。"""
-    if not trades and not alerts:
+def build_message(trades: list, alerts: list, names: dict, when: str, dividends: list | None = None) -> dict | None:
+    """回傳 ntfy 的 JSON 內容（不含 topic）；沒有東西要通知時回傳 None。
+    dividends 是配息配股的訊息（cloud_monitor.dividends 已經排好的文字）。"""
+    dividends = dividends or []
+    if not trades and not alerts and not dividends:
         return None
     lines = []
     for t in trades:
@@ -42,17 +44,20 @@ def build_message(trades: list, alerts: list, names: dict, when: str) -> dict | 
         extra = f"，損益 {t['pnl']:+,.0f}" if "pnl" in t else ""
         lines.append(f"💰 {t['side']} {t['code']} {name} {t['shares']:,} 股 @ {t['price']:g}"
                      f"（{t['reason']}）{extra}".replace("  ", " "))
+    lines += dividends
     for a in alerts:
         lines.append(f"{KIND_ICON.get(a.kind, '•')} {a.message}")
     parts = []
     if trades:
         parts.append(f"{len(trades)} 筆成交")
+    if dividends:
+        parts.append("配息配股")
     if alerts:
         parts.append(f"{len(alerts)} 則提醒")
     body = "\n".join(lines)
     if len(body.encode("utf-8")) > MAX_BODY:
         body = body.encode("utf-8")[:MAX_BODY].decode("utf-8", "ignore") + "\n…（其他請看網頁）"
-    urgent = bool(trades) or any(a.kind == "stop" for a in alerts)
+    urgent = bool(trades) or bool(dividends) or any(a.kind == "stop" for a in alerts)
     return {"title": f"雲端看盤：{'、'.join(parts)}（{when}）", "message": body,
             "priority": 4 if urgent else 3, "tags": ["chart_with_upwards_trend"],
             "click": MONITOR_URL}

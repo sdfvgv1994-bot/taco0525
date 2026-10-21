@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 
-from cloud_monitor import notify  # noqa: E402
+from cloud_monitor import dividends, notify  # noqa: E402
 from cloud_monitor.exchange import SUFFIX_EXCHANGE, exchange_of  # noqa: E402,F401
 from cloud_monitor.config import (  # noqa: E402,F401  設定檔積木；舊名字照樣能用
     HISTORY_BARS, NOTIFY_DEFAULT, ConfigError, load_config,
@@ -168,7 +168,7 @@ def finite(x):
 
 def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetime | None = None,
         monitor_kwargs: dict | None = None, log=print, fetch_names: bool = True,
-        orders_path: Path | None = None) -> dict:
+        orders_path: Path | None = None, dividend_source=None) -> dict:
     now = now or datetime.now(TPE).replace(tzinfo=None)
     store = Store(state_dir)
     config_errors = []
@@ -203,6 +203,13 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     res = m.refresh(now)
     orders = process_orders(m, res, store, load_orders(orders_path or Path(config_path).parent / "orders.json"),
                             now, log)
+    try:     # 配息配股：除權息日照持股入帳（出錯不影響看盤）
+        div = dividends.process(m.account, store, m.names, now, source=dividend_source, log=log)
+        m.save()
+    except Exception as e:  # noqa: BLE001
+        log(f"  ⚠ 配息配股處理失敗：{e}")
+        div = {"messages": [], "receivable": 0.0, "pending": [], "notes": [f"配息配股這次處理失敗：{e}"]}
+    res.notes += div["notes"]
 
     # 這次抓不到報價的持股用上一次的價格計算（不然會被當成成本價，資產走勢出現假的跳動）
     stamp = f"{now:%Y-%m-%d %H:%M}"
@@ -212,7 +219,7 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     store.save("prices.json", known)
     prices = {c: v["price"] for c, v in known.items()}
     missing = [c for c in m.account.positions if c not in m.last_prices]
-    total = m.account.total_assets(prices)
+    total = m.account.total_assets(prices) + div["receivable"]   # 應收股利也算資產（除息當天股價會掉）
     updated_utc = now.replace(tzinfo=TPE).astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
     equity = store.load("equity.json", [])
     if missing:
@@ -224,10 +231,13 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
         store.save("equity.json", equity)
 
     notify_cfg = {**NOTIFY_DEFAULT, **cfg.get("notify", {})}
-    notify_status = push_notifications(store, m, res, notify_cfg, now, log)
+    notify_status = push_notifications(store, m, res, notify_cfg, now, log, extra=div["messages"])
 
     data = page_data(m, res, now, updated_utc, total, equity, config_errors, held_only,
                      prices, {c: v["time"] for c, v in known.items()})
+    data["account"].update(receivable=div["receivable"],
+                           return_pct=round((total / m.account.initial - 1) * 100, 3))
+    data["dividends"] = [{**p, "name": m.names.get(p["code"], "")} for p in div["pending"]]
     data["settings"]["notify"] = {**notify_cfg, "status": notify_status}
     data["orders"] = orders
     data = finite(data)
@@ -247,7 +257,7 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
     return data
 
 
-def push_notifications(store, m, res, cfg: dict, now: datetime, log=print) -> str:
+def push_notifications(store, m, res, cfg: dict, now: datetime, log=print, extra: list | None = None) -> str:
     """把這次新的成交和提醒合併成一則手機通知。回傳顯示在網頁上的狀態。"""
     topic = (os.environ.get("NTFY_TOPIC") or "").strip()
     if not cfg["enabled"]:
@@ -267,7 +277,8 @@ def push_notifications(store, m, res, cfg: dict, now: datetime, log=print) -> st
             log("  已送出推播測試通知")
         trades = res.trades if cfg["trades"] else []
         alerts = notify.pick_alerts(res.alerts, m.settings["strategies"][0], cfg)
-        payload = notify.build_message(trades, alerts, m.names, f"{now:%m/%d %H:%M}")
+        payload = notify.build_message(trades, alerts, m.names, f"{now:%m/%d %H:%M}",
+                                       dividends=extra if cfg["trades"] else [])
         if payload:
             notify.send(payload)
             log(f"  已推播：{payload['title']}")
