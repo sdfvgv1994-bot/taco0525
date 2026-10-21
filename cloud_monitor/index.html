@@ -321,6 +321,7 @@ function render() {
   const a = data.account;
   const tiles = [["總資產", money(a.total), ""], ["報酬率", pct(a.return_pct), dirClass(a.return_pct)],
                  ["現金", money(a.cash), ""], ["持股市值", money(a.market_value), ""]];
+  if (a.receivable) tiles.push(["應收股利", money(a.receivable), ""]);
   $("tiles").replaceChildren(...tiles.map(([k, v, c]) => {
     const t = el("div", { class: "tile" });
     t.append(el("div", { class: "k" }, k), el("div", { class: "v " + c }, v));
@@ -345,6 +346,21 @@ function render() {
       t.append(r);
     }
     $("positions").replaceChildren(t);
+  }
+  // 待入帳股利（除息後約一個月入帳，已扣健保補充保費、匯費或美股預扣稅）
+  const dv = data.dividends || [];
+  if (dv.length) {
+    const t = el("table");
+    const h = el("tr");
+    ["待入帳股利", "除息日", "股數", "每股", "預計入帳", "金額"].forEach((x) => h.append(el("th", {}, x)));
+    t.append(h);
+    for (const d of dv) {
+      const r = el("tr", { title: d.detail || "" });
+      r.append(el("td", {}, `${d.code} ${d.name || ""}`), el("td", {}, d.ex_date.slice(5)), el("td", {}, fmt(d.shares, 0)),
+               el("td", {}, fmt(d.cash_ps)), el("td", {}, d.pay_date.slice(5)), el("td", { class: "rise" }, money(d.net)));
+      t.append(r);
+    }
+    $("positions").append(t);
   }
 
   // 自選股
@@ -371,7 +387,7 @@ function render() {
     t.append(h);
     for (const x of data.trades) {
       const r = el("tr");
-      r.append(el("td", {}, x.time.slice(5, 16)), el("td", { class: x.side === "買進" ? "rise" : "fall" }, x.side),
+      r.append(el("td", {}, x.time.slice(5, 16)), el("td", { class: x.side === "賣出" ? "fall" : "rise" }, x.side),
                el("td", {}, x.code), el("td", {}, fmt(x.shares, 0)), el("td", {}, fmt(x.price)),
                el("td", {}, money(x.cash_flow)), el("td", { class: dirClass(x.pnl || 0) }, x.pnl == null ? "" : money(x.pnl)),
                el("td", {}, x.reason));
