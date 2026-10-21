@@ -12,7 +12,7 @@
       "shares": 1000,
       "avg_cost": 239.84129000000001,
       "tw": true,
-      "peak": 244.0
+      "peak": 246.5
     },
     "AAPL": {
       "shares": 500,
@@ -24,7 +24,7 @@
       "shares": 200,
       "avg_cost": 44.4,
       "tw": true,
-      "peak": 44.4
+      "peak": 44.5
     }
   },
   "trades": [
