@@ -28,6 +28,7 @@ long_ma = 20               # 長均線天數（最多 240）
 [limits]
 "2330" = { lower = 1800, upper = 3000, support = [2500] }
 "2454" = { lower = 3800, upper = 5500 }
+"2801" = { lower = 21, upper = 30 }
 # "2317" = { support = [200, 190] }
 # "AAPL" = { upper = 400 }
 
