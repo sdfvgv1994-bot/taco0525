@@ -629,3 +629,32 @@ def test_telegram_find_chat_picks_latest_private_chat():
         def json(self):
             return {"ok": True, "result": []}
     assert notify.telegram_find_chat(env={"TELEGRAM_TOKEN": "1:x"}, get=lambda url, timeout: Empty()) is None
+
+
+def test_telegram_find_chat_clears_webhook_on_409():
+    calls = []
+
+    class R:
+        def __init__(self, code, body=None):
+            self.status_code, self._b = code, body or {}
+        def json(self):
+            return self._b
+    replies = iter([R(409), R(200, {"ok": True}), R(200, {"ok": True, "result": [{"message": {"chat": {"id": 7, "type": "private"}}}]})])
+    got = notify.telegram_find_chat(env={"TELEGRAM_TOKEN": "1:x"}, get=lambda url, timeout: calls.append(url.rsplit("/", 1)[1]) or next(replies))
+    assert got == "7" and calls == ["getUpdates", "deleteWebhook", "getUpdates"]
+    with pytest.raises(RuntimeError) as e:
+        notify.telegram_find_chat(env={"TELEGRAM_TOKEN": "1:x"}, get=lambda url, timeout: R(401))
+    assert "作廢" in str(e.value) and "1:x" not in str(e.value)
+
+
+def test_telegram_error_is_recorded_without_token(tmp_path, monkeypatch):
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_TOKEN", "123:SECRET")
+    def boom(**kw):
+        raise RuntimeError("Telegram 回應 HTTP 401（Token 錯了或已經作廢）")
+    monkeypatch.setattr(notify, "telegram_find_chat", boom)
+    data = run_once(tmp_path, write_config(tmp_path / "c.toml", BASE), Feed(), TW_OPEN)
+    saved = json.loads((tmp_path / "state" / "notify.json").read_text(encoding="utf-8"))
+    assert "401" in saved["telegram_error"] and "SECRET" not in json.dumps(saved)
+    assert "401" in data["settings"]["notify"]["status"]

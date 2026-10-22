@@ -111,9 +111,16 @@ def telegram_find_chat(env=None, get=None) -> str | None:
     if get is None:
         import requests
         get = requests.get
-    r = get(f"https://api.telegram.org/bot{token}/getUpdates", timeout=15)
-    if getattr(r, "status_code", 0) != 200:
-        raise RuntimeError(f"Telegram 回應 HTTP {getattr(r, 'status_code', 0)}（Token 可能貼錯）")
+    base = f"https://api.telegram.org/bot{token}"
+    r = get(base + "/getUpdates", timeout=15)
+    if getattr(r, "status_code", 0) == 409:
+        # 機器人被設了 webhook（例如把 Token 給過別的機器人），getUpdates 會被擋：清掉再試一次
+        get(base + "/deleteWebhook", timeout=15)
+        r = get(base + "/getUpdates", timeout=15)
+    code = getattr(r, "status_code", 0)
+    if code != 200:
+        why = {401: "Token 錯了或已經作廢", 404: "Token 格式不對", 409: "機器人被設了 webhook，清不掉"}.get(code, "")
+        raise RuntimeError(f"Telegram 回應 HTTP {code}" + (f"（{why}）" if why else ""))
     chats = [u.get("message", {}).get("chat", {}) for u in (r.json().get("result") or [])]
     chats = [c for c in chats if c.get("type") == "private" and c.get("id") is not None]
     return str(chats[-1]["id"]) if chats else None

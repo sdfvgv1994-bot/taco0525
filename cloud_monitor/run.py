@@ -273,11 +273,19 @@ def push_notifications(store, m, res, cfg: dict, now: datetime, log=print, extra
         # Chat ID：GitHub 有設就用；沒設就用上次自動找到的；再沒有就問 Telegram 誰傳過訊息給機器人
         chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip() or state.get("telegram_chat")
         if not chat:
+            why = None
             try:
                 chat = notify.telegram_find_chat()
+                if not chat:
+                    why = "Telegram 沒有最近 24 小時內的私訊"
             except Exception as e:  # noqa: BLE001
+                why = str(e)[:200]
                 log(f"  ⚠ 找 Telegram Chat ID 失敗：{e}")
+            if why and state.get("telegram_error") != why:   # 記下原因（不含 Token），方便查問題
+                state["telegram_error"] = why
+                store.save("notify.json", state)
             if chat:
+                state.pop("telegram_error", None)
                 state["telegram_chat"] = chat          # 公開的資料分支：只有 Chat ID，沒有 Token
                 store.save("notify.json", state)
                 log("  已自動找到 Telegram Chat ID")
@@ -286,7 +294,8 @@ def push_notifications(store, m, res, cfg: dict, now: datetime, log=print, extra
             channels.append(("Telegram", "telegram", tg_fp,
                              lambda payload, _c=chat: notify.telegram_send(payload, chat=_c)))
         else:
-            waiting.append("Telegram：請先在機器人對話框傳一句話（例如 hi），下次更新就會接上")
+            waiting.append("Telegram：" + (f"還沒接上（{state.get('telegram_error')}）。" if state.get("telegram_error") else "")
+                           + "請先在機器人對話框傳一句話（例如 hi），下次更新就會接上")
     trades = res.trades if cfg["trades"] else []
     alerts = notify.pick_alerts(res.alerts, m.settings["strategies"][0], cfg)
     payload = notify.build_message(trades, alerts, m.names, f"{now:%m/%d %H:%M}",
