@@ -256,7 +256,7 @@ def test_run_pushes_once_per_new_event_and_welcome_once(tmp_path, monkeypatch):
     feed.data = {"2330": GOLDEN}
     data = run_once(tmp_path, cfg, feed, TW_OPEN)
     assert [p["title"].split("（")[0] for p in sent] == ["雲端看盤：手機推播設定成功", "雲端看盤：1 筆成交、1 則提醒"]
-    assert data["settings"]["notify"]["status"] == "已開啟"
+    assert data["settings"]["notify"]["status"] == "已開啟（ntfy）"
     state = (tmp_path / "state" / "notify.json").read_text(encoding="utf-8")
     assert "secret-topic" not in state                       # 公開的資料分支只存雜湊
     sent.clear()
@@ -540,3 +540,55 @@ def test_manual_order_expires_and_bad_file_ignored(tmp_path):
     write_orders(tmp_path, [{"id": "x", "time": "2026-10-01T10:00:00", "code": "AAPL", "side": "buy", "shares": 1}])
     data = run_once(tmp_path, cfg, Feed(), SATURDAY)
     assert data["orders"][0]["status"] == "expired"
+
+
+def test_telegram_send_builds_text_without_leaking_token():
+    calls = []
+
+    class R:
+        status_code = 200
+    r = notify.telegram_send({"title": "雲端看盤：1 筆成交", "message": "💰 買進 2330", "click": "https://x/"},
+                             post=lambda url, json, timeout: calls.append((url, json)) or R(),
+                             env={"TELEGRAM_TOKEN": "123:ABC", "TELEGRAM_CHAT_ID": "999"})
+    assert r == "已推播"
+    url, body = calls[0]
+    assert url == "https://api.telegram.org/bot123:ABC/sendMessage" and body["chat_id"] == "999"
+    assert body["text"] == "雲端看盤：1 筆成交\n💰 買進 2330\nhttps://x/"
+
+    class Bad:
+        status_code, text = 401, "Unauthorized"
+    with pytest.raises(RuntimeError) as e:
+        notify.telegram_send({"title": "t"}, post=lambda *a, **k: Bad(), env={"TELEGRAM_TOKEN": "123:ABC", "TELEGRAM_CHAT_ID": "1"})
+    assert "401" in str(e.value) and "123:ABC" not in str(e.value)
+
+
+def test_run_pushes_to_telegram_only(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(notify, "send", lambda *a, **k: pytest.fail("沒設 ntfy 不該推"))
+    monkeypatch.setattr(notify, "telegram_send", lambda payload, **kw: sent.append(payload) or "已推播")
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.setenv("TELEGRAM_TOKEN", "123:ABC")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "999")
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    data = run_once(tmp_path, write_config(tmp_path / "c.toml", BASE), feed, TW_OPEN)
+    assert [p["title"].split("（")[0] for p in sent] == ["雲端看盤：手機推播設定成功", "雲端看盤：1 筆成交、1 則提醒"]
+    assert data["settings"]["notify"]["status"] == "已開啟（Telegram）"
+    assert "123:ABC" not in (tmp_path / "state" / "notify.json").read_text(encoding="utf-8")
+
+
+def test_run_pushes_to_both_and_one_failure_does_not_stop_other(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(notify, "send", lambda payload, **kw: sent.append(("ntfy", payload["title"])) or "已推播")
+    def tg_boom(payload, **kw):
+        raise RuntimeError("Telegram 回應 HTTP 400")
+    monkeypatch.setattr(notify, "telegram_send", tg_boom)
+    monkeypatch.setenv("NTFY_TOPIC", "t")
+    monkeypatch.setenv("TELEGRAM_TOKEN", "1:x")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "2")
+    feed = Feed()
+    feed.data = {"2330": GOLDEN}
+    data = run_once(tmp_path, write_config(tmp_path / "c.toml", BASE), feed, TW_OPEN)
+    assert len(sent) == 2                                     # ntfy 照樣送（歡迎＋成交）
+    st = data["settings"]["notify"]["status"]
+    assert st.startswith("已開啟（ntfy、Telegram）") and "Telegram" in st.split("失敗")[1]

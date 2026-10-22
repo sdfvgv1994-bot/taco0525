@@ -49,7 +49,7 @@ GitHub 的雲端機器每 15 分鐘幫你跑一次看盤：抓自選股報價、
 4. 打錯格式也沒關係：網頁上會用黃色框寫出第幾行、哪裡錯，並先沿用上一次正確的設定
    （手機打出的全形逗號、彎引號會自動當成半形；拼錯的設定名稱會提示正確的寫法）
 
-## 手機推播（ntfy，免費）
+## 手機推播（ntfy／Telegram，免費）
 有自動成交、買賣訊號、突破上下限或停損時，手機會收到一則通知（同一次更新的事件合併成一則），點通知會打開雲端看盤。
 
 1. 手機安裝 **ntfy**（App Store / Google Play 搜尋「ntfy」）
@@ -60,6 +60,16 @@ GitHub 的雲端機器每 15 分鐘幫你跑一次看盤：抓自選股報價、
 
 - 頻道名稱等於密碼：知道名稱的人都收得到你的通知，所以只放在 GitHub Secrets，不寫進公開的設定檔
 - 要推播哪些事情，在 `config.toml` 的 `[notify]` 設定；`enabled = false` 可以整個關掉
+
+### 也推到 Telegram（可以和 ntfy 同時用）
+1. Telegram 搜尋 **@BotFather**（藍勾勾）→ 傳 `/newbot` → 取名字 → 取 username（結尾一定要是 `bot`）→ 複製它給的 **Token**
+2. 搜尋自己的機器人，按「Start」並**先傳一句話**（沒傳過的話機器人不能傳給你）
+3. 瀏覽器打開 `https://api.telegram.org/bot你的Token/getUpdates`，找 `"chat":{"id":` 後面的數字，這是 **Chat ID**
+4. GitHub 倉庫 **Settings → Secrets and variables → Actions** 新增兩個 secret：`TELEGRAM_TOKEN`、`TELEGRAM_CHAT_ID`
+5. 下一次雲端更新會先送「手機推播設定成功」到 Telegram，收到就完成了
+
+- Token 等於機器人的密碼，只放在 GitHub Secrets；資料分支只存雜湊，看不出 Token
+- 兩個管道都設的話兩邊都會收到；其中一個失敗不影響另一個，網頁「目前設定」會顯示哪個失敗
 
 ## 運作方式
 - **只在該市場的交易時間內**判斷訊號、自動交易（台股看台股時間、美股看美股時間、日股看東京時間…）；
