@@ -7,8 +7,8 @@ Actions secret「NTFY_TOPIC」。每次雲端看盤有新的成交或提醒，�
 
 環境變數：
     NTFY_TOPIC    頻道名稱（沒設就不推 ntfy）
-    TELEGRAM_TOKEN    BotFather 給的機器人 Token（和 TELEGRAM_CHAT_ID 一起設才會推 Telegram）
-    TELEGRAM_CHAT_ID  自己的 Chat ID（getUpdates 裡 "chat":{"id": 後面的數字）
+    TELEGRAM_TOKEN    BotFather 給的機器人 Token（設了就推 Telegram）
+    TELEGRAM_CHAT_ID  自己的 Chat ID（可以不設：雲端會從「誰傳過訊息給機器人」自動找到，存在資料分支）
     NTFY_SERVER   伺服器，預設 https://ntfy.sh
     NTFY_TOKEN    存取權杖（有用 ntfy 帳號保護頻道時才需要）
 """
@@ -98,13 +98,32 @@ TG_MAX = 4000   # Telegram 單則上限 4096 字
 
 def telegram_ready(env=None) -> bool:
     env = os.environ if env is None else env
-    return bool((env.get("TELEGRAM_TOKEN") or "").strip() and (env.get("TELEGRAM_CHAT_ID") or "").strip())
+    return bool((env.get("TELEGRAM_TOKEN") or "").strip())
 
 
-def telegram_send(payload: dict, post=None, env=None) -> str:
+def telegram_find_chat(env=None, get=None) -> str | None:
+    """問 Telegram「最近誰傳過私訊給這個機器人」，回傳最新那個人的 Chat ID；沒有人傳過 → None。
+    （Telegram 只留最近 24 小時、還沒被讀走的訊息，所以找到後要存起來。）"""
+    env = os.environ if env is None else env
+    token = (env.get("TELEGRAM_TOKEN") or "").strip()
+    if not token:
+        return None
+    if get is None:
+        import requests
+        get = requests.get
+    r = get(f"https://api.telegram.org/bot{token}/getUpdates", timeout=15)
+    if getattr(r, "status_code", 0) != 200:
+        raise RuntimeError(f"Telegram 回應 HTTP {getattr(r, 'status_code', 0)}（Token 可能貼錯）")
+    chats = [u.get("message", {}).get("chat", {}) for u in (r.json().get("result") or [])]
+    chats = [c for c in chats if c.get("type") == "private" and c.get("id") is not None]
+    return str(chats[-1]["id"]) if chats else None
+
+
+def telegram_send(payload: dict, post=None, env=None, chat: str | None = None) -> str:
     """把和 ntfy 一樣的通知內容（title、message、click）送到 Telegram 機器人。"""
     env = os.environ if env is None else env
-    token, chat = (env.get("TELEGRAM_TOKEN") or "").strip(), (env.get("TELEGRAM_CHAT_ID") or "").strip()
+    token = (env.get("TELEGRAM_TOKEN") or "").strip()
+    chat = (chat or env.get("TELEGRAM_CHAT_ID") or "").strip()
     if not (token and chat):
         return "沒有設定 TELEGRAM_TOKEN / TELEGRAM_CHAT_ID，不推播"
     text = payload.get("title", "")

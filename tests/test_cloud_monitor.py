@@ -566,6 +566,7 @@ def test_run_pushes_to_telegram_only(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(notify, "send", lambda *a, **k: pytest.fail("沒設 ntfy 不該推"))
     monkeypatch.setattr(notify, "telegram_send", lambda payload, **kw: sent.append(payload) or "已推播")
+    monkeypatch.setattr(notify, "telegram_find_chat", lambda **kw: pytest.fail("有設 Chat ID 就不用找"))
     monkeypatch.delenv("NTFY_TOPIC", raising=False)
     monkeypatch.setenv("TELEGRAM_TOKEN", "123:ABC")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "999")
@@ -592,3 +593,39 @@ def test_run_pushes_to_both_and_one_failure_does_not_stop_other(tmp_path, monkey
     assert len(sent) == 2                                     # ntfy 照樣送（歡迎＋成交）
     st = data["settings"]["notify"]["status"]
     assert st.startswith("已開啟（ntfy、Telegram）") and "Telegram" in st.split("失敗")[1]
+
+
+def test_telegram_chat_id_found_automatically_and_saved(tmp_path, monkeypatch):
+    sent, asked = [], []
+    monkeypatch.setattr(notify, "telegram_send", lambda payload, chat=None, **kw: sent.append(chat) or "已推播")
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_TOKEN", "123:ABC")
+    found = [None]
+    monkeypatch.setattr(notify, "telegram_find_chat", lambda **kw: asked.append(1) or found[0])
+    cfg, feed = write_config(tmp_path / "c.toml", BASE), Feed()
+    data = run_once(tmp_path, cfg, feed, TW_OPEN)              # 還沒人傳訊息給機器人
+    assert sent == [] and "傳一句話" in data["settings"]["notify"]["status"]
+    found[0] = "8856"
+    data = run_once(tmp_path, cfg, feed, datetime(2026, 10, 8, 10, 15))
+    assert sent == ["8856"] and data["settings"]["notify"]["status"] == "已開啟（Telegram）"
+    saved = json.loads((tmp_path / "state" / "notify.json").read_text(encoding="utf-8"))
+    assert saved["telegram_chat"] == "8856" and "123:ABC" not in json.dumps(saved)
+    n = len(asked)
+    run_once(tmp_path, cfg, feed, datetime(2026, 10, 8, 10, 30))
+    assert len(asked) == n                                   # 存起來了，不再問
+
+
+def test_telegram_find_chat_picks_latest_private_chat():
+    class R:
+        status_code = 200
+        def json(self):
+            return {"ok": True, "result": [{"message": {"chat": {"id": 1, "type": "private"}}},
+                                           {"message": {"chat": {"id": -5, "type": "group"}}},
+                                           {"message": {"chat": {"id": 8856, "type": "private"}}}]}
+    assert notify.telegram_find_chat(env={"TELEGRAM_TOKEN": "1:x"}, get=lambda url, timeout: R()) == "8856"
+
+    class Empty(R):
+        def json(self):
+            return {"ok": True, "result": []}
+    assert notify.telegram_find_chat(env={"TELEGRAM_TOKEN": "1:x"}, get=lambda url, timeout: Empty()) is None

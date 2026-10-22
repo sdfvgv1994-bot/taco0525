@@ -264,14 +264,29 @@ def push_notifications(store, m, res, cfg: dict, now: datetime, log=print, extra
     if not cfg["enabled"]:
         return "關閉"
     if not topic and not tg:
-        return "還沒設定（GitHub 的 NTFY_TOPIC，或 TELEGRAM_TOKEN＋TELEGRAM_CHAT_ID）"
-    channels = []
+        return "還沒設定（GitHub 的 NTFY_TOPIC 或 TELEGRAM_TOKEN）"
+    channels, waiting = [], []
+    state = store.load("notify.json", {})
     if topic:
         channels.append(("ntfy", "fingerprint", notify.topic_fingerprint(topic), notify.send))
     if tg:
-        tg_id = (os.environ.get("TELEGRAM_TOKEN", "") + "|" + os.environ.get("TELEGRAM_CHAT_ID", "")).strip()
-        channels.append(("Telegram", "telegram", notify.topic_fingerprint(tg_id), notify.telegram_send))
-    state = store.load("notify.json", {})
+        # Chat ID：GitHub 有設就用；沒設就用上次自動找到的；再沒有就問 Telegram 誰傳過訊息給機器人
+        chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip() or state.get("telegram_chat")
+        if not chat:
+            try:
+                chat = notify.telegram_find_chat()
+            except Exception as e:  # noqa: BLE001
+                log(f"  ⚠ 找 Telegram Chat ID 失敗：{e}")
+            if chat:
+                state["telegram_chat"] = chat          # 公開的資料分支：只有 Chat ID，沒有 Token
+                store.save("notify.json", state)
+                log("  已自動找到 Telegram Chat ID")
+        if chat:
+            tg_fp = notify.topic_fingerprint(os.environ.get("TELEGRAM_TOKEN", "").strip() + "|" + chat)
+            channels.append(("Telegram", "telegram", tg_fp,
+                             lambda payload, _c=chat: notify.telegram_send(payload, chat=_c)))
+        else:
+            waiting.append("Telegram：請先在機器人對話框傳一句話（例如 hi），下次更新就會接上")
     trades = res.trades if cfg["trades"] else []
     alerts = notify.pick_alerts(res.alerts, m.settings["strategies"][0], cfg)
     payload = notify.build_message(trades, alerts, m.names, f"{now:%m/%d %H:%M}",
@@ -294,7 +309,8 @@ def push_notifications(store, m, res, cfg: dict, now: datetime, log=print, extra
             log(f"  ⚠ {name} 推播失敗：{e}")
             failed.append(f"{name}（{e}）")
     names = "、".join(n for n, *_ in channels)
-    return f"已開啟（{names}）" + (f"，但這次推播失敗：{'；'.join(failed)}" if failed else "")
+    status = (f"已開啟（{names}）" if channels else "等待設定") + (f"，但這次推播失敗：{'；'.join(failed)}" if failed else "")
+    return status + ("；" + "；".join(waiting) if waiting else "")
 
 
 def page_data(m, res, now, updated_utc, total, equity, config_errors, held_only,

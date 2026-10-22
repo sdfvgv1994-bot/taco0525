@@ -64,11 +64,13 @@ GitHub 的雲端機器每 15 分鐘幫你跑一次看盤：抓自選股報價、
 ### 也推到 Telegram（可以和 ntfy 同時用）
 1. Telegram 搜尋 **@BotFather**（藍勾勾）→ 傳 `/newbot` → 取名字 → 取 username（結尾一定要是 `bot`）→ 複製它給的 **Token**
 2. 搜尋自己的機器人，按「Start」並**先傳一句話**（沒傳過的話機器人不能傳給你）
-3. 瀏覽器打開 `https://api.telegram.org/bot你的Token/getUpdates`，找 `"chat":{"id":` 後面的數字，這是 **Chat ID**
-4. GitHub 倉庫 **Settings → Secrets and variables → Actions** 新增兩個 secret：`TELEGRAM_TOKEN`、`TELEGRAM_CHAT_ID`
-5. 下一次雲端更新會先送「手機推播設定成功」到 Telegram，收到就完成了
+3. GitHub 倉庫 **Settings → Secrets and variables → Actions** 新增 secret：Name 填 `TELEGRAM_TOKEN`，Secret 貼 Token
+4. 下一次雲端更新會自動找到你的 Chat ID（就是剛剛傳訊息給機器人的人），先送「手機推播設定成功」，收到就完成了
 
-- Token 等於機器人的密碼，只放在 GitHub Secrets；資料分支只存雜湊，看不出 Token
+- Chat ID 不用自己查：雲端從「最近誰私訊過這個機器人」找到，存在公開的資料分支（`notify.json`）。
+  Chat ID 單獨被看到沒關係，沒有 Token 就不能用它傳訊息；不想公開的話，也可以自己把 Chat ID 存成 `TELEGRAM_CHAT_ID` secret
+- Telegram 只保留最近 24 小時的訊息：如果一直沒接上，再傳一句話給機器人就好
+- Token 等於機器人的密碼，只放在 GitHub Secrets，**不要傳給任何其他機器人**；資料分支只存雜湊，看不出 Token
 - 兩個管道都設的話兩邊都會收到；其中一個失敗不影響另一個，網頁「目前設定」會顯示哪個失敗
 
 ## 運作方式
