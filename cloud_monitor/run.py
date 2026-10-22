@@ -258,34 +258,43 @@ def run(state_dir: Path, out_dir: Path, config_path: Path = CONFIG, now: datetim
 
 
 def push_notifications(store, m, res, cfg: dict, now: datetime, log=print, extra: list | None = None) -> str:
-    """把這次新的成交和提醒合併成一則手機通知。回傳顯示在網頁上的狀態。"""
+    """把這次新的成交和提醒合併成一則手機通知，送到有設定的管道（ntfy、Telegram）。回傳顯示在網頁上的狀態。"""
     topic = (os.environ.get("NTFY_TOPIC") or "").strip()
+    tg = notify.telegram_ready()
     if not cfg["enabled"]:
         return "關閉"
-    if not topic:
-        return "還沒設定（GitHub 的 NTFY_TOPIC）"
-    status = "已開啟"
-    # 第一次看到這個頻道：送一則測試通知，確認手機收得到（只存雜湊，不存頻道名稱）
-    fp = notify.topic_fingerprint(topic)
+    if not topic and not tg:
+        return "還沒設定（GitHub 的 NTFY_TOPIC，或 TELEGRAM_TOKEN＋TELEGRAM_CHAT_ID）"
+    channels = []
+    if topic:
+        channels.append(("ntfy", "fingerprint", notify.topic_fingerprint(topic), notify.send))
+    if tg:
+        tg_id = (os.environ.get("TELEGRAM_TOKEN", "") + "|" + os.environ.get("TELEGRAM_CHAT_ID", "")).strip()
+        channels.append(("Telegram", "telegram", notify.topic_fingerprint(tg_id), notify.telegram_send))
     state = store.load("notify.json", {})
-    try:
-        if state.get("fingerprint") != fp:
-            notify.send({"title": "雲端看盤：手機推播設定成功", "tags": ["white_check_mark"],
-                         "message": "之後有自動成交、買賣訊號、突破上下限或停損時會通知你。",
-                         "click": notify.MONITOR_URL})
-            store.save("notify.json", {"fingerprint": fp})
-            log("  已送出推播測試通知")
-        trades = res.trades if cfg["trades"] else []
-        alerts = notify.pick_alerts(res.alerts, m.settings["strategies"][0], cfg)
-        payload = notify.build_message(trades, alerts, m.names, f"{now:%m/%d %H:%M}",
-                                       dividends=extra if cfg["trades"] else [])
-        if payload:
-            notify.send(payload)
-            log(f"  已推播：{payload['title']}")
-    except Exception as e:  # noqa: BLE001 - 推播失敗不影響看盤
-        log(f"  ⚠ 推播失敗：{e}")
-        status = f"已開啟，但這次推播失敗（{e}）"
-    return status
+    trades = res.trades if cfg["trades"] else []
+    alerts = notify.pick_alerts(res.alerts, m.settings["strategies"][0], cfg)
+    payload = notify.build_message(trades, alerts, m.names, f"{now:%m/%d %H:%M}",
+                                   dividends=extra if cfg["trades"] else [])
+    failed = []
+    for name, key, fp, send in channels:
+        try:
+            # 第一次看到這個頻道／機器人：送一則測試通知，確認手機收得到（只存雜湊，不存名稱或 Token）
+            if state.get(key) != fp:
+                send({"title": "雲端看盤：手機推播設定成功", "tags": ["white_check_mark"],
+                      "message": "之後有自動成交、買賣訊號、突破上下限、停損或配息時會通知你。",
+                      "click": notify.MONITOR_URL})
+                state[key] = fp
+                store.save("notify.json", state)
+                log(f"  已送出 {name} 測試通知")
+            if payload:
+                send(payload)
+                log(f"  已推播（{name}）：{payload['title']}")
+        except Exception as e:  # noqa: BLE001 - 推播失敗不影響看盤
+            log(f"  ⚠ {name} 推播失敗：{e}")
+            failed.append(f"{name}（{e}）")
+    names = "、".join(n for n, *_ in channels)
+    return f"已開啟（{names}）" + (f"，但這次推播失敗：{'；'.join(failed)}" if failed else "")
 
 
 def page_data(m, res, now, updated_utc, total, equity, config_errors, held_only,

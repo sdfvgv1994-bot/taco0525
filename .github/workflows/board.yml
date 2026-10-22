@@ -108,6 +108,8 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}      # 手機推播的頻道名稱（在 GitHub 的 Secrets 設定）
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}       # Telegram 機器人（BotFather 給的 Token）
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python cloud_monitor/run.py --state _state --out _site/monitor
 
       # 看盤程式中途出錯也要存：出錯前可能已經成交，沒存的話下一次會再做一次

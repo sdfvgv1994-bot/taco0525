@@ -3,8 +3,12 @@
 手機裝 ntfy App、訂閱一個只有自己知道的頻道名稱，再把同一個名稱設成 GitHub 的
 Actions secret「NTFY_TOPIC」。每次雲端看盤有新的成交或提醒，就合併成一則通知送出。
 
+也可以（或同時）推到 Telegram 機器人：在 GitHub 設 TELEGRAM_TOKEN 和 TELEGRAM_CHAT_ID。
+
 環境變數：
-    NTFY_TOPIC    頻道名稱（必填，沒設就不推播）
+    NTFY_TOPIC    頻道名稱（沒設就不推 ntfy）
+    TELEGRAM_TOKEN    BotFather 給的機器人 Token（和 TELEGRAM_CHAT_ID 一起設才會推 Telegram）
+    TELEGRAM_CHAT_ID  自己的 Chat ID（getUpdates 裡 "chat":{"id": 後面的數字）
     NTFY_SERVER   伺服器，預設 https://ntfy.sh
     NTFY_TOKEN    存取權杖（有用 ntfy 帳號保護頻道時才需要）
 """
@@ -86,4 +90,37 @@ def send(payload: dict, post=None, env=None) -> str:
     code = getattr(r, "status_code", 0)
     if code != 200:
         raise RuntimeError(f"ntfy 回應 HTTP {code}：{getattr(r, 'text', '')[:200]}")
+    return "已推播"
+
+
+TG_MAX = 4000   # Telegram 單則上限 4096 字
+
+
+def telegram_ready(env=None) -> bool:
+    env = os.environ if env is None else env
+    return bool((env.get("TELEGRAM_TOKEN") or "").strip() and (env.get("TELEGRAM_CHAT_ID") or "").strip())
+
+
+def telegram_send(payload: dict, post=None, env=None) -> str:
+    """把和 ntfy 一樣的通知內容（title、message、click）送到 Telegram 機器人。"""
+    env = os.environ if env is None else env
+    token, chat = (env.get("TELEGRAM_TOKEN") or "").strip(), (env.get("TELEGRAM_CHAT_ID") or "").strip()
+    if not (token and chat):
+        return "沒有設定 TELEGRAM_TOKEN / TELEGRAM_CHAT_ID，不推播"
+    text = payload.get("title", "")
+    if payload.get("message"):
+        text += "\n" + payload["message"]
+    if payload.get("click"):
+        text += "\n" + payload["click"]
+    if len(text) > TG_MAX:
+        text = text[:TG_MAX] + "\n…（其他請看網頁）"
+    if post is None:
+        import requests
+        post = requests.post
+    r = post(f"https://api.telegram.org/bot{token}/sendMessage",
+             json={"chat_id": chat, "text": text, "disable_web_page_preview": True}, timeout=15)
+    code = getattr(r, "status_code", 0)
+    if code != 200:
+        # 不把網址印出來（裡面有 Token）
+        raise RuntimeError(f"Telegram 回應 HTTP {code}：{getattr(r, 'text', '')[:200]}")
     return "已推播"
