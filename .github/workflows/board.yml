@@ -32,6 +32,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 雲端看盤那幾步「出錯也繼續」，工作不會變紅；把結果交給後面的 alert 工作判斷要不要通知
+    outputs:
+      state: ${{ steps.state.outcome }}
+      monitor: ${{ steps.monitor.outcome }}
+      save: ${{ steps.save.outcome }}
     steps:
       - uses: actions/checkout@v4
 
@@ -176,3 +181,37 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # ---------------- 壞掉／恢復時通知老闆（n8n → Telegram） ----------------
+  # 只在狀態「改變」時才敲 n8n：一直正常、一直壞著都不會每 15 分鐘通知一次。
+  # 上一次的狀態用快取保存（很小）。台股總覽抓資料失敗很常見、也會自己補，不在通知範圍。
+  # 入口網址放在 Secrets 的 N8N_BOARD_WEBHOOK；沒設就只記狀態、不通知。
+  alert:
+    needs: [build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: cloud_monitor/board_alert.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/cache@v4
+        with:
+          path: .cache/board_alert
+          key: board-alert-${{ github.run_id }}
+          restore-keys: board-alert-
+
+      - name: 狀態改變就通知
+        env:
+          N8N_BOARD_WEBHOOK: ${{ secrets.N8N_BOARD_WEBHOOK }}
+        run: >-
+          python3 cloud_monitor/board_alert.py
+          --build "${{ needs.build.result }}" --deploy "${{ needs.deploy.result }}"
+          --state "${{ needs.build.outputs.state }}" --monitor "${{ needs.build.outputs.monitor }}"
+          --save "${{ needs.build.outputs.save }}"
+          --status-file .cache/board_alert/status.json
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
