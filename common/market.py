@@ -178,3 +178,68 @@ def fetch_history(sym: Symbol, period: str = "2y", start=None, end=None,
     if last_err:
         msg += f"：{last_err}"
     raise RuntimeError(msg)
+
+
+# ---------------------------------------------------------------- 即時報價備援
+YAHOO_DELAY_NOTE = "來自 Yahoo（約延遲 15–20 分鐘）"
+
+
+def _yahoo_daily(tickers: list) -> dict:
+    """一次下載多檔最近幾天的日 K，回傳 {Yahoo 代號: DataFrame}。盤中最後一根是今天（延遲報價）。"""
+    import yfinance as yf
+    raw = yf.download(tickers, period="5d", interval="1d", group_by="ticker",
+                      progress=False, auto_adjust=False, threads=True)
+    out = {}
+    if raw is None or raw.empty:
+        return out
+    if isinstance(raw.columns, pd.MultiIndex):
+        for t in tickers:
+            if t in raw.columns.get_level_values(0):
+                df = raw[t].dropna(subset=["Close"])
+                if not df.empty:
+                    out[t] = df
+    elif len(tickers) == 1:
+        out[tickers[0]] = raw.dropna(subset=["Close"])
+    return out
+
+
+def yahoo_quotes(items: list, download=None, now=None) -> dict:
+    """證交所即時報價抓不到時的備援：一次向 Yahoo 查完，不重試。
+
+    items 和 TwseClient.realtime 一樣（例：['2330', '6488', '^TWII']），股票同時查 .TW 和 .TWO。
+    回傳 {輸入: Quote}，source 是 "yahoo"、name 留空（Yahoo 只有英文名稱）。
+    """
+    from datetime import datetime, time as dtime
+    from zoneinfo import ZoneInfo
+
+    from .twse_parse import Quote
+
+    tickers = {}
+    for it in items:
+        if it == "^TWII":
+            tickers[it] = ["^TWII"]
+        elif re.fullmatch(r"\d{4,6}[A-Z]?", it):
+            tickers[it] = [f"{it}.TW", f"{it}.TWO"]
+    if not tickers:
+        return {}
+    got = (download or _yahoo_daily)([t for ts in tickers.values() for t in ts])
+    now = now or datetime.now(ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
+    out = {}
+    for it, ts in tickers.items():
+        t = next((t for t in ts if got.get(t) is not None and not got[t].empty), None)
+        if t is None:
+            continue
+        df = got[t]
+        last = df.iloc[-1]
+        d = pd.Timestamp(df.index[-1]).date()
+        close_at = datetime.combine(d, dtime(13, 30))
+        when = min(now, close_at) if d == now.date() else close_at
+
+        def val(col):
+            v = last.get(col)
+            return None if v is None or pd.isna(v) else float(v)
+        out[it] = Quote(it, "", "otc" if t.endswith(".TWO") else "tse", val("Close"),
+                        float(df["Close"].iloc[-2]) if len(df) > 1 else None,
+                        val("Open"), val("High"), val("Low"),
+                        None if it == "^TWII" else val("Volume"), when, source="yahoo")
+    return out

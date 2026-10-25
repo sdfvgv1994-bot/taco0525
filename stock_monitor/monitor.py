@@ -64,7 +64,7 @@ def show_quotes(m: Monitor, res):
         trend = "多" if s.short_ma > s.long_ma else "空"
         pos = m.account.positions.get(name)
         held = f"{pos['shares']} 股" if pos else ""
-        # 台股沒拿到即時報價時，價格是最近一天的收盤價，加上 * 標記
+        # 台股沒拿到即時報價時，價格是 Yahoo 延遲報價或最近一天的收盤價，加上 * 標記
         mark = "*" if res.realtime_tried and name not in res.live and \
             uses_twse(parse_symbol(name)) else " "
         print(f"{pad(labels[name], width)}{s.price:>9.2f}{mark}{s.change_pct:>+8.2f}{s.short_ma:>10.2f}"

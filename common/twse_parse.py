@@ -139,6 +139,7 @@ class Quote:
     low: float | None
     volume: float | None   # 股（指數為 None）
     time: datetime | None
+    source: str = "mis"    # mis = 證交所即時報價；yahoo = Yahoo 延遲報價（證交所抓不到時的備援）
 
     @property
     def change(self) -> float | None:

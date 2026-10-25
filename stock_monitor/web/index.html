@@ -434,7 +434,7 @@ function stockCard(st) {
     if (r.trail_price) parts.push(`移動停損 ${num(r.trail_price)}`);
     body += `<div class="pos">${parts.map(x => `<span>${x}</span>`).join("")}</div>`;
   }
-  body += `<div class="row2" style="margin-top:4px;font-size:11px">資料日 ${esc(r.date)}${r.live ? "・證交所即時" : ""}${r.delayed ? "・* 最近收盤價" : ""}</div>`;
+  body += `<div class="row2" style="margin-top:4px;font-size:11px">資料日 ${esc(r.date)}${r.live ? "・證交所即時" : ""}${r.delayed ? "・* 非即時（Yahoo 延遲或最近收盤價）" : ""}</div>`;
   return `<div class="card stock ${(r.alerts || []).length ? "alert" : ""}" data-t="${esc(st.ticker)}">${body}</div>`;
 }
 

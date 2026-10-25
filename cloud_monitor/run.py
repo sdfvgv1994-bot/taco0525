@@ -133,17 +133,19 @@ def process_orders(m, res, store, orders: list, now: datetime, log=print) -> lis
 
 # ---------------------------------------------------------------- 執行
 def prefetch_names(m, now: datetime, log=print) -> None:
-    """還沒有股名的台股，向證交所 / 櫃買中心查一次當月資料，從標題取出股名（之後存在 names.json）。
-    雲端機器常拿不到即時報價，這樣股名才不會空白。"""
+    """還沒有股名的台股：先查台股總覽存下的全市場股名（不連網），沒有才向證交所 / 櫃買中心查一次
+    當月資料，從標題取出股名（之後存在 names.json）。雲端機器常拿不到即時報價，這樣股名才不會空白。"""
     from common import twse
+    from common.names import listing_names
     cl = twse.client()
+    listing = listing_names()
     for code in m.watchlist:
         sym = parse_symbol(code)
         if not sym.is_tw_stock or code in m.names:
             continue
         base = sym.candidates[0].split(".")[0]
         try:
-            name = cl.cached_name(base)
+            name = listing.get(base) or cl.cached_name(base)
             if not name:
                 if cl.stock_month(base, now.year, now.month).empty and base not in cl.names:
                     cl.tpex_month(base, now.year, now.month)

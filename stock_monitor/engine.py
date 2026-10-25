@@ -14,7 +14,7 @@ import pandas as pd
 
 from common import costs
 from common import strategies as strat
-from common.market import fetch_history, parse_symbol, uses_twse
+from common.market import YAHOO_DELAY_NOTE, fetch_history, parse_symbol, uses_twse, yahoo_quotes
 
 from .account import Account, TradeError
 from .signals import Alert, Snapshot, evaluate, snapshot, update_peak
@@ -62,6 +62,7 @@ class RefreshResult:
     trades: list = field(default_factory=list)      # 這次自動成交
     notes: list = field(default_factory=list)       # 其他訊息（例如自動買進失敗）
     live: set = field(default_factory=set)          # 價格來自證交所即時報價的代號
+    delayed: set = field(default_factory=set)       # 證交所抓不到、價格改用 Yahoo 延遲報價的代號
     inactive: set = field(default_factory=set)      # 不在交易時間、這次不判斷訊號的代號
     stale: dict = field(default_factory=dict)       # 交易時間內卻還沒有今天 K 棒的代號 → 最後 K 棒日期
     realtime_tried: bool = False                    # 這次有沒有向證交所查即時報價
@@ -70,9 +71,12 @@ class RefreshResult:
 
 class Monitor:
     def __init__(self, store, fetcher=default_fetcher, realtime=None, name_lookup=None,
-                 is_active=None, session_date=None):
+                 is_active=None, session_date=None, fallback=None):
         # realtime(items) → {項目: Quote}；預設用證交所即時報價，測試時可換成假的
         self._realtime = realtime
+        # fallback(items) → {項目: Quote}；證交所即時報價抓不到的台股改查 Yahoo 延遲報價
+        # （資料來源 auto 才查）。有換掉 realtime 又沒給 fallback 時不查，測試才不會連網
+        self._fallback = fallback if fallback is not None or realtime is not None else yahoo_quotes
         # name_lookup(代號) → 股名；預設查證交所歷史資料標題裡的股名
         self._name_lookup = name_lookup
         # is_active(代號, 現在時間) → 這檔現在要不要判斷訊號、自動交易（雲端版只在交易時間內）
@@ -177,14 +181,21 @@ class Monitor:
         items = ["^TWII" if parse_symbol(n).candidates[0] == "^TWII" else n.split(".")[0]
                  for n in tw]
         self.realtime_tried = True
+        got = {}
         try:
             if self._realtime is None:
                 from common import twse
                 self._realtime = twse.client().realtime
-            got = self._realtime(items)
-        except Exception as e:  # noqa: BLE001 - 查不到就退回用日 K 收盤價
+            got = dict(self._realtime(items))
+        except Exception as e:  # noqa: BLE001 - 查不到就改用 Yahoo 或日 K 收盤價
             self.realtime_error = str(e)
-            return {}
+        missing = [i for i in dict.fromkeys(items) if i not in got or got[i].price is None]
+        if missing and self._fallback and s.get("source", "auto") == "auto":
+            try:
+                extra = self._fallback(missing)
+            except Exception:  # noqa: BLE001 - Yahoo 也抓不到就用日 K 收盤價
+                extra = {}
+            got.update({i: q for i, q in extra.items() if q.price is not None})
         return {n: got[i] for n, i in zip(tw, items) if i in got}
 
     def lookup_name(self, name: str) -> str | None:
@@ -196,7 +207,9 @@ class Monitor:
             return None
         if self._name_lookup is None:
             from common import twse
-            self._name_lookup = lambda code: twse.client().cached_name(code)
+            from common.names import listing_name
+            # 先查證交所歷史資料的快取，再查台股總覽存下的全市場股名（都不連網）
+            self._name_lookup = lambda code: twse.client().cached_name(code) or listing_name(code)
         return self._name_lookup(sym.candidates[0].split(".")[0])
 
     def refresh(self, now: datetime | None = None) -> RefreshResult:
@@ -253,7 +266,7 @@ class Monitor:
             res.snapshots[name] = snap
             self.last_prices[name] = snap.price
             if name in quotes and quotes[name].price is not None:
-                res.live.add(name)
+                (res.delayed if quotes[name].source == "yahoo" else res.live).add(name)
             for key, why in snap.skipped.items():
                 skipped.setdefault(key, []).append((name, why))
             pos = self.account.positions.get(name)
@@ -286,14 +299,19 @@ class Monitor:
         if res.realtime_tried:
             missing = [n for n in res.snapshots
                        if uses_twse(parse_symbol(n)) and n not in res.live and n not in res.stale]
-            fallback = ("來自 Yahoo（約延遲 15 分鐘）" if s.get("source") == "yahoo"
-                        else "是最近一天的收盤價")
+            delayed = [n for n in missing if n in res.delayed]
+            if s.get("source") == "yahoo" or (missing and len(delayed) == len(missing)):
+                fallback = YAHOO_DELAY_NOTE
+            elif delayed:
+                fallback = f"：{'、'.join(delayed)} {YAHOO_DELAY_NOTE}，其他是最近一天的收盤價"
+            else:
+                fallback = "是最近一天的收盤價"
             if res.realtime_error:
                 res.notes.append(f"證交所即時報價暫時抓不到（{res.realtime_error}）"
                                  + (f"，標 * 的台股價格{fallback}" if missing else ""))
             elif missing:
                 res.notes.append(f"證交所即時報價沒有回傳 {'、'.join(missing)}，"
-                                 f"標 * 的{fallback}")
+                                 f"標 * 的價格{fallback}")
         self.save()
         return res
 
