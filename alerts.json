@@ -16,7 +16,8 @@
     "6274|sell|ma|2026-10-21",
     "BTC|buy|orderflow|2026-10-21",
     "6274|sell|orderflow|2026-10-22",
-    "BTC|buy|orderflow|2026-10-23"
+    "BTC|buy|orderflow|2026-10-23",
+    "BTC|buy|orderflow|2026-10-26"
   ],
   "history": [
     {
@@ -120,6 +121,12 @@
       "code": "BTC",
       "kind": "buy",
       "message": "BTC 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 81329.16"
+    },
+    {
+      "time": "2026-10-26 08:32:52",
+      "code": "BTC",
+      "kind": "buy",
+      "message": "BTC 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 80199.96"
     }
   ]
 }
