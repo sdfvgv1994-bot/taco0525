@@ -1,6 +1,5 @@
 {
   "fired": [
-    "NVDA|sell|macd|2026-10-12",
     "0050|sell|macd|2026-10-13",
     "2454|sell|ma|2026-10-13",
     "2317|sell|ma|2026-10-13",
@@ -17,7 +16,8 @@
     "BTC|buy|orderflow|2026-10-21",
     "6274|sell|orderflow|2026-10-22",
     "BTC|buy|orderflow|2026-10-23",
-    "BTC|buy|orderflow|2026-10-26"
+    "BTC|buy|orderflow|2026-10-26",
+    "BTC|buy|orderflow|2026-10-27"
   ],
   "history": [
     {
@@ -127,6 +127,12 @@
       "code": "BTC",
       "kind": "buy",
       "message": "BTC 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 80199.96"
+    },
+    {
+      "time": "2026-10-27 08:29:13",
+      "code": "BTC",
+      "kind": "buy",
+      "message": "BTC 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 80142.17"
     }
   ]
 }
