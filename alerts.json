@@ -18,7 +18,8 @@
     "BTC|buy|orderflow|2026-10-29",
     "6674|buy|ma|2026-10-29",
     "2801|above||2026-10-29",
-    "AAPL|buy|orderflow|2026-10-29"
+    "AAPL|buy|orderflow|2026-10-29",
+    "BTC|sell|orderflow|2026-10-29"
   ],
   "history": [
     {
@@ -188,6 +189,12 @@
       "code": "AAPL",
       "kind": "buy",
       "message": "AAPL 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 350.19"
+    },
+    {
+      "time": "2026-10-30 05:13:07",
+      "code": "BTC",
+      "kind": "sell",
+      "message": "BTC 賣出訊號【訂單流】訂單流賣方力道轉強（累積量差快線下穿慢線），現價 79094.73"
     }
   ]
 }
