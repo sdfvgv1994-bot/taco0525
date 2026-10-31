@@ -1,0 +1,74 @@
+# PR 開啟、重新打開、合併、關閉時，直接推 Telegram 通知老闆（取代以前的 n8n「GitHub PR 通知」流程）。
+# 只聽 pull_request 的這三種動作；推新 commit、加標籤等不通知。
+# 要在這個 repo 的 Settings → Secrets and variables → Actions 設定：
+#   TELEGRAM_TOKEN    Telegram 機器人的 Token（BotFather 給的）
+#   TELEGRAM_CHAT_ID  要通知的聊天 ID
+# 沒設就只印一行說明、不通知，工作不會變紅。
+# 安全：PR 標題、作者名是外人可以填的文字，一律用環境變數傳給程式，不直接放進指令裡。
+name: PR 通知 Telegram
+
+on:
+  pull_request:
+    types: [opened, reopened, closed]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: 推 Telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          python3 - <<'PY'
+          import html, json, os, sys, urllib.request
+
+          e = os.environ
+          token = e.get("TELEGRAM_TOKEN", "").strip()
+          chat = e.get("TELEGRAM_CHAT_ID", "").strip()
+          if not (token and chat):
+              # 別人從 fork 開的 PR 也會走到這裡（GitHub 不給 fork 看 Secrets），不通知是正常的
+              print("沒有 TELEGRAM_TOKEN／TELEGRAM_CHAT_ID（或是 fork 來的 PR），不通知")
+              sys.exit(0)
+
+          action, merged = e["PR_ACTION"], e.get("PR_MERGED") == "true"
+          if action == "opened":
+              head = "🔀 新 PR"
+          elif action == "reopened":
+              head = "🔁 PR 重新打開"
+          elif action == "closed" and merged:
+              head = "✅ PR 已合併"
+          elif action == "closed":
+              head = "🚫 PR 關閉（沒合併）"
+          else:
+              print("這種動作不通知：" + action)
+              sys.exit(0)
+
+          esc = lambda s: html.escape(s, quote=False)
+          text = head + "｜<b>" + esc(e["PR_REPO"]) + "</b> #" + e["PR_NUMBER"] + "\n" + esc(e["PR_TITLE"])
+          if e.get("PR_AUTHOR"):
+              text += "\n👤 " + esc(e["PR_AUTHOR"])
+          text += "\n" + e["PR_URL"]
+
+          base = e.get("TELEGRAM_API_BASE", "https://api.telegram.org")   # 只有測試時才會改
+          req = urllib.request.Request(
+              base + "/bot" + token + "/sendMessage",
+              data=json.dumps({"chat_id": chat, "text": text[:4000], "parse_mode": "HTML",
+                               "disable_web_page_preview": True}, ensure_ascii=False).encode("utf-8"),
+              headers={"Content-Type": "application/json"}, method="POST")
+          try:
+              urllib.request.urlopen(req, timeout=15).close()
+              print("已通知：" + head)
+          except Exception as ex:      # 通知失敗不要讓工作變紅；訊息裡不能有 Token
+              print("::warning::通知 Telegram 失敗：" + type(ex).__name__ + " " + str(ex).replace(token, "<token>")[:150])
+          PY

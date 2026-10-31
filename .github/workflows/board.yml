@@ -182,10 +182,11 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 
-  # ---------------- 壞掉／恢復時通知老闆（n8n → Telegram） ----------------
-  # 只在狀態「改變」時才敲 n8n：一直正常、一直壞著都不會每 15 分鐘通知一次。
+  # ---------------- 壞掉／恢復時通知老闆（直接推 Telegram） ----------------
+  # 只在狀態「改變」時才通知：一直正常、一直壞著都不會每 15 分鐘通知一次。
   # 上一次的狀態用快取保存（很小）。台股總覽抓資料失敗很常見、也會自己補，不在通知範圍。
-  # 入口網址放在 Secrets 的 N8N_BOARD_WEBHOOK；沒設就只記狀態、不通知。
+  # 用 Secrets 的 TELEGRAM_TOKEN／TELEGRAM_CHAT_ID（雲端看盤本來就在用）直接推；
+  # 沒設的話退回舊做法：敲 Secrets 裡 N8N_BOARD_WEBHOOK 的 n8n 入口；都沒設就只記狀態、不通知。
   alert:
     needs: [build, deploy]
     if: always()
@@ -207,7 +208,9 @@ jobs:
 
       - name: 狀態改變就通知
         env:
-          N8N_BOARD_WEBHOOK: ${{ secrets.N8N_BOARD_WEBHOOK }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          N8N_BOARD_WEBHOOK: ${{ secrets.N8N_BOARD_WEBHOOK }}   # 舊做法，n8n 不用了可以刪掉這個 Secret
         run: >-
           python3 cloud_monitor/board_alert.py
           --build "${{ needs.build.result }}" --deploy "${{ needs.deploy.result }}"
