@@ -1,6 +1,11 @@
-"""雲端看板「壞掉」或「恢復正常」時，敲 n8n 的入口，由 n8n 推 Telegram 通知老闆。
+"""雲端看板「壞掉」或「恢復正常」時，直接推 Telegram 通知老闆。
 
-只在狀態改變時才通知：一直壞著不會每 15 分鐘吵一次，一直正常也不會通知（n8n 不會被觸發、不吃額度）。
+通知方式（照順序挑第一個有設定的）：
+  1. 直接推 Telegram：環境變數 TELEGRAM_TOKEN ＋ TELEGRAM_CHAT_ID（GitHub Secrets，雲端看盤本來就在用）
+  2. 敲 n8n 的入口，由 n8n 推 Telegram：環境變數 N8N_BOARD_WEBHOOK（舊做法，n8n 試用到期後不能用，留著當備用）
+  3. 都沒設就只記狀態、不通知
+
+只在狀態改變時才通知：一直壞著不會每 15 分鐘吵一次，一直正常也不會通知。
 連續壞 2 次（約 30 分鐘）才算壞掉，一次就好的小失誤不通知；壞著的時候多了新問題會再說一聲。
 看不到的情況：整個 workflow 沒在跑（排程被停用、GitHub Actions 掛掉）或這個工作自己失敗。
 上一次的狀態存在 --status-file（board.yml 用 GitHub 快取保存）。
@@ -9,13 +14,13 @@
         --state "" --monitor "" --save "" --status-file .cache/board_alert/status.json \
         --run-url https://github.com/sdfvgv1994-bot/taco0525/actions/runs/123
 
-n8n 入口網址放在環境變數 N8N_BOARD_WEBHOOK（GitHub Secrets 設定）；沒設就只記狀態、不通知。
-網址等同密碼，任何輸出都不會印出它。
+Telegram Token 和 n8n 入口網址都等同密碼，任何輸出都不會印出它們。
 只用 Python 標準函式庫：就算專案的套件裝壞了，這個也能執行。
 """
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import sys
@@ -24,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SOURCE = "taco0525-board"          # n8n 那邊只接受帶這個 source 的請求
+RUN_URL_PREFIX = "https://github.com/sdfvgv1994-bot/taco0525/actions/runs/"   # 只有這種網址才附在通知裡
 TAIPEI = timezone(timedelta(hours=8))
 UNSETTLED = {"cancelled", "skipped", ""}   # 步驟層級：這種結果不算成功也不算失敗
 CONFIRM_RUNS = 2       # 連續壞這麼多次才通知：一次性的網路小失誤（下一次就好）不吵老闆
@@ -96,6 +102,33 @@ def post(url: str, payload: dict, opener=urllib.request.urlopen) -> None:
             raise RuntimeError(f"n8n 回應 HTTP {code}")
 
 
+def format_text(kind: str, problems: list[str], when: str, run_url: str) -> str:
+    """Telegram 訊息（HTML 格式），內容和以前 n8n 推的一樣。"""
+    def esc(s: str) -> str:
+        return html.escape(str(s), quote=False)
+
+    if kind == "fail":
+        text = "⚠️ <b>雲端看板出問題了</b>\n" + "\n".join("• " + esc(p) for p in problems[:5])
+    else:
+        text = "✅ <b>雲端看板恢復正常</b>"
+    text += "\n🕒 " + esc(when)
+    if run_url.startswith(RUN_URL_PREFIX):
+        text += "\n" + esc(run_url)
+    return text
+
+
+def post_telegram(token: str, chat: str, text: str, opener=urllib.request.urlopen) -> None:
+    payload = {"chat_id": chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with opener(req, timeout=15) as r:
+        code = getattr(r, "status", 200)
+        if not 200 <= code < 300:
+            raise RuntimeError(f"Telegram 回應 HTTP {code}")
+
+
 def main(argv=None, env=None, opener=urllib.request.urlopen, now=None) -> int:
     env = os.environ if env is None else env
     ap = argparse.ArgumentParser()
@@ -114,9 +147,19 @@ def main(argv=None, env=None, opener=urllib.request.urlopen, now=None) -> int:
     prev = load_status(status_file)
     kind, new_state = decide(prev, problems)
     url = (env.get("N8N_BOARD_WEBHOOK") or "").strip()
+    tg_token = (env.get("TELEGRAM_TOKEN") or "").strip()
+    tg_chat = (env.get("TELEGRAM_CHAT_ID") or "").strip()
+    when = (now or datetime.now(TAIPEI)).strftime("%Y-%m-%d %H:%M")
 
-    if kind and url:
-        when = (now or datetime.now(TAIPEI)).strftime("%Y-%m-%d %H:%M")
+    if kind and tg_token and tg_chat:
+        try:
+            post_telegram(tg_token, tg_chat, format_text(kind, problems, when, a.run_url), opener=opener)
+            print(f"已通知（Telegram）：{kind}")
+        except Exception as e:                       # 通知失敗不要讓看板工作變紅；也不記狀態，下次再試
+            msg = str(e).replace(tg_token, "<token>")
+            print(f"::warning::通知 Telegram 失敗（下次再試）：{type(e).__name__} {msg[:150]}")
+            return 0
+    elif kind and url:
         payload = {"source": SOURCE, "status": kind, "problems": problems,
                    "time": when, "run_url": a.run_url}
         try:
@@ -127,7 +170,7 @@ def main(argv=None, env=None, opener=urllib.request.urlopen, now=None) -> int:
             print(f"::warning::通知 n8n 失敗（下次再試）：{type(e).__name__} {msg[:150]}")
             return 0
     elif kind:
-        print(f"狀態變成 {kind}，但沒有設定 N8N_BOARD_WEBHOOK，不通知")
+        print(f"狀態變成 {kind}，但沒有設定 TELEGRAM_TOKEN／TELEGRAM_CHAT_ID 或 N8N_BOARD_WEBHOOK，不通知")
     elif problems and new_state["status"] == "ok":
         print(f"這次有問題（連續第 {new_state['bad_runs']} 次），連續 {CONFIRM_RUNS} 次才通知")
     else:
