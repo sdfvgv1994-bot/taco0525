@@ -1,7 +1,5 @@
 {
   "fired": [
-    "6274|sell|ma|2026-10-21",
-    "BTC|buy|orderflow|2026-10-21",
     "6274|sell|orderflow|2026-10-22",
     "BTC|buy|orderflow|2026-10-23",
     "BTC|buy|orderflow|2026-10-26",
