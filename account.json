@@ -11,7 +11,8 @@
     "00406A": {
       "shares": 80000,
       "avg_cost": 7.84115775,
-      "tw": true
+      "tw": true,
+      "peak": 7.87
     }
   },
   "trades": [
