@@ -1,6 +1,6 @@
 {
   "initial": 1000000,
-  "cash": 135502.78,
+  "cash": 35631.47,
   "positions": {
     "2317": {
       "shares": 1000,
@@ -13,6 +13,11 @@
       "avg_cost": 7.84115775,
       "tw": true,
       "peak": 7.87
+    },
+    "AAPL": {
+      "shares": 283,
+      "avg_cost": 352.9021493735162,
+      "tw": false
     }
   },
   "trades": [
@@ -106,6 +111,17 @@
       "tax": 0.0,
       "cash_flow": -627292.62,
       "reason": "手動（雲端網頁）"
+    },
+    {
+      "time": "2026-11-04 23:01:30",
+      "side": "買進",
+      "code": "AAPL",
+      "price": 352.4,
+      "shares": 283,
+      "fee": 142.11,
+      "tax": 0.0,
+      "cash_flow": -99871.31,
+      "reason": "自動：SMC 市場結構買進"
     }
   ]
 }
