@@ -48,7 +48,8 @@
     "AAPL|buy|ma|2026-11-10",
     "2330|buy|orderflow|2026-11-11",
     "BTC|buy|orderflow|2026-11-11",
-    "AAPL|buy|smc|2026-11-11"
+    "AAPL|buy|smc|2026-11-11",
+    "BTC|buy|orderflow|2026-11-12"
   ],
   "history": [
     {
@@ -488,6 +489,12 @@
       "code": "AAPL",
       "kind": "buy",
       "message": "AAPL 買進訊號【SMC 市場結構】SMC 結構轉多（突破前波高點），現價 354.73"
+    },
+    {
+      "time": "2026-11-12 08:44:28",
+      "code": "BTC",
+      "kind": "buy",
+      "message": "BTC 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 74021.53"
     }
   ]
 }
