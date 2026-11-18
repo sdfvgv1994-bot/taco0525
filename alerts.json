@@ -26,7 +26,8 @@
     "BTC|buy|orderflow|2026-11-11",
     "AAPL|buy|smc|2026-11-11",
     "BTC|buy|orderflow|2026-11-12",
-    "2882|sell|orderflow|2026-11-18"
+    "2882|sell|orderflow|2026-11-18",
+    "NVDA|buy|orderflow|2026-11-18"
   ],
   "history": [
     {
@@ -478,6 +479,12 @@
       "code": "2882",
       "kind": "sell",
       "message": "2882 賣出訊號【訂單流】訂單流賣方力道轉強（累積量差快線下穿慢線），現價 109.50"
+    },
+    {
+      "time": "2026-11-18 22:31:15",
+      "code": "NVDA",
+      "kind": "buy",
+      "message": "NVDA 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 158.39"
     }
   ]
 }
