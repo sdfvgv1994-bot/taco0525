@@ -1,29 +1,5 @@
 {
   "fired": [
-    "BTC|buy|orderflow|2026-10-29",
-    "6674|buy|ma|2026-10-29",
-    "2801|above||2026-10-29",
-    "AAPL|buy|orderflow|2026-10-29",
-    "BTC|sell|orderflow|2026-10-29",
-    "BTC|sell|orderflow|2026-10-30",
-    "2330|sell|smc|2026-10-30",
-    "0050|sell|smc|2026-10-30",
-    "6274|sell|smc|2026-10-30",
-    "2801|above||2026-10-30",
-    "2317|sell|ma|2026-10-30",
-    "6674|buy|ma|2026-10-30",
-    "2317|buy|orderflow|2026-10-30",
-    "NVDA|sell|smc|2026-10-30",
-    "2801|above||2026-11-02",
-    "2330|buy|orderflow|2026-11-02",
-    "AAPL|sell|orderflow|2026-11-02",
-    "AAPL|sell|smc|2026-11-02",
-    "2330|buy|orderflow|2026-11-03",
-    "2801|above||2026-11-03",
-    "2454|below||2026-11-03",
-    "2890|sell|orderflow|2026-11-03",
-    "AAPL|sell|ma|2026-11-03",
-    "AAPL|buy|orderflow|2026-11-03",
     "2454|below||2026-11-04",
     "2890|sell|smc|2026-11-04",
     "2890|sell|ma|2026-11-04",
@@ -49,7 +25,8 @@
     "2330|buy|orderflow|2026-11-11",
     "BTC|buy|orderflow|2026-11-11",
     "AAPL|buy|smc|2026-11-11",
-    "BTC|buy|orderflow|2026-11-12"
+    "BTC|buy|orderflow|2026-11-12",
+    "2882|sell|orderflow|2026-11-18"
   ],
   "history": [
     {
@@ -495,6 +472,12 @@
       "code": "BTC",
       "kind": "buy",
       "message": "BTC 買進訊號【訂單流】訂單流買方力道轉強（累積量差快線上穿慢線），現價 74021.53"
+    },
+    {
+      "time": "2026-11-18 10:15:51",
+      "code": "2882",
+      "kind": "sell",
+      "message": "2882 賣出訊號【訂單流】訂單流賣方力道轉強（累積量差快線下穿慢線），現價 109.50"
     }
   ]
 }
