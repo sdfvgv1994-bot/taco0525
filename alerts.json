@@ -1,8 +1,5 @@
 {
   "fired": [
-    "2330|buy|orderflow|2026-11-11",
-    "BTC|buy|orderflow|2026-11-11",
-    "AAPL|buy|smc|2026-11-11",
     "BTC|buy|orderflow|2026-11-12",
     "2882|sell|orderflow|2026-11-18",
     "NVDA|buy|orderflow|2026-11-18",
@@ -19,7 +16,9 @@
     "6674|sell|smc|2026-11-25",
     "6674|sell|ma|2026-11-25",
     "2454|below||2026-11-25",
-    "AAPL|sell|ma|2026-11-25"
+    "AAPL|sell|ma|2026-11-25",
+    "2454|below||2026-11-26",
+    "6674|sell|smc|2026-11-26"
   ],
   "history": [
     {
@@ -561,6 +560,18 @@
       "code": "AAPL",
       "kind": "sell",
       "message": "AAPL 賣出訊號【均線交叉】死亡交叉，現價 345.65"
+    },
+    {
+      "time": "2026-11-26 09:01:23",
+      "code": "2454",
+      "kind": "below",
+      "message": "2454 跌破下限 3800，現價 3730.00"
+    },
+    {
+      "time": "2026-11-26 09:01:23",
+      "code": "6674",
+      "kind": "sell",
+      "message": "6674 賣出訊號【SMC 市場結構】SMC 結構轉空（跌破前波低點），現價 18.35"
     }
   ]
 }
